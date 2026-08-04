@@ -229,7 +229,7 @@ fun SellerDashboardScreen(viewModel: AppViewModel) {
         }
     }
 
-    /* ✅ Real-time order updates in the background
+    /* ✅ Real-time order updates in the background l
     androidx.compose.runtime.LaunchedEffect(sellerId) {
         if (sellerId.isNotEmpty()) {
             // Initial load
