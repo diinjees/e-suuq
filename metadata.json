@@ -1,0 +1,6 @@
+{
+  "name": "E-Suuq",
+  "description": "Ethiopian Super-App connecting Sellers, Buyers, and Delivery Personnel with secure communication, product discovery, and seamless transactions.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

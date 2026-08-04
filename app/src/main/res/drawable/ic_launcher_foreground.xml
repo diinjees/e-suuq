@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Rounded corner background for the icon itself -->
+    <item
+        android:width="84dp"
+        android:height="84dp"
+        android:gravity="center">
+        <shape android:shape="rectangle">
+            <solid android:color="#FFFFFF" />
+            <corners android:radius="16dp" />
+        </shape>
+    </item>
+    <!-- App Logo icon -->
+    <item
+        android:width="66dp"
+        android:height="66dp"
+        android:drawable="@drawable/logo_app_1784199175789"
+        android:gravity="center" />
+</layer-list>
