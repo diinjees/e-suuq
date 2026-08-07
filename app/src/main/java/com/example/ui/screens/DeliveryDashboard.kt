@@ -188,6 +188,9 @@ fun DeliveryDashboardScreen(viewModel: AppViewModel) {
     var showPerformanceCalendarDialog by remember { mutableStateOf(false) }
     
     var showHistoriesSubPage by remember { mutableStateOf(false) }
+    androidx.activity.compose.BackHandler(enabled = showHistoriesSubPage) {
+        showHistoriesSubPage = false
+    }
     var showFinalDeliveryDialogForOrder by remember { mutableStateOf<DeliveryOrderEntity?>(null) }
     var enteredDeliveryCode by remember { mutableStateOf("") }
     var deliveryCodeError by remember { mutableStateOf<String?>(null) }

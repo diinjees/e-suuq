@@ -227,6 +227,42 @@ fun MainDashboardScreen(viewModel: AppViewModel) {
 
     val currentRole = activeUser?.role ?: "BUYER"
 
+    val isSellerSubViewActive = currentTab == MainTab.MIDDLE && currentRole == "SELLER" && activeDashboardSubView != "MAIN"
+    val hasActiveOverlay = (selectedProductForDetail != null ||
+            selectedStoreName != null ||
+            showNotificationsPage ||
+            showUserSearchPage ||
+            viewAllPageType != null ||
+            showPromoDetailsIndex != null ||
+            activeOrderSuccess != null ||
+            selectedChatRoomId != null ||
+            profileSubScreen != "MENU" ||
+            currentTab != MainTab.HOME) && !isSellerSubViewActive
+
+    androidx.activity.compose.BackHandler(enabled = hasActiveOverlay) {
+        if (selectedProductForDetail != null) {
+            viewModel.setSelectedProductForDetail(null)
+        } else if (selectedStoreName != null) {
+            viewModel.setSelectedStoreName(null)
+        } else if (showNotificationsPage) {
+            viewModel.setShowNotificationsPage(false)
+        } else if (showUserSearchPage) {
+            viewModel.setShowUserSearchPage(false)
+        } else if (viewAllPageType != null) {
+            viewModel.setViewAllPageType(null)
+        } else if (showPromoDetailsIndex != null) {
+            viewModel.setShowPromoDetailsIndex(null)
+        } else if (activeOrderSuccess != null) {
+            viewModel.setActiveOrderSuccess(null)
+        } else if (selectedChatRoomId != null) {
+            viewModel.selectChatRoomId(null)
+        } else if (profileSubScreen != "MENU") {
+            viewModel.setProfileSubScreen("MENU")
+        } else if (currentTab != MainTab.HOME) {
+            viewModel.selectTab(MainTab.HOME)
+        }
+    }
+
     if (selectedProductForDetail != null) {
         ProductDetailPage(
             product = selectedProductForDetail!!,

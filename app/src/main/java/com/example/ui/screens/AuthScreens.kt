@@ -504,6 +504,7 @@ fun OnboardingScreen(viewModel: AppViewModel) {
     var regEmailInput by remember { mutableStateOf("") }
     var regBirthDate by remember { mutableStateOf("") }
     var regPasswordInput by remember { mutableStateOf("") }
+    var regFromReferCodeInput by remember { mutableStateOf("") }
     
     val context = LocalContext.current
     val idDocInfront by viewModel.regIdDocumentInfront.collectAsStateWithLifecycle()
@@ -1058,6 +1059,26 @@ fun OnboardingScreen(viewModel: AppViewModel) {
                                     placeholder = { Text("YYYY-MM-DD") },
                                     shape = RoundedCornerShape(12.dp)
                                 )
+                                Spacer(modifier = Modifier.height(12.dp))
+
+                                OutlinedTextField(
+                                    value = regFromReferCodeInput,
+                                    onValueChange = { regFromReferCodeInput = it },
+                                    label = { Text("Referral Code (Optional)") },
+                                    placeholder = { Text("e.g. ES23U") },
+                                    keyboardOptions = KeyboardOptions(
+                                        imeAction = ImeAction.Done
+                                    ),
+                                    keyboardActions = KeyboardActions(
+                                        onDone = { triggerStep1Next() }
+                                    ),
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .testTag("reg_refer_code_input"),
+                                    leadingIcon = { Icon(Icons.Default.CardGiftcard, contentDescription = null, tint = BrandGreenPrimary) },
+                                    singleLine = true,
+                                    shape = RoundedCornerShape(12.dp)
+                                )
 
                                 if (loginErrorText != null) {
                                     Spacer(modifier = Modifier.height(12.dp))
@@ -1288,6 +1309,7 @@ fun OnboardingScreen(viewModel: AppViewModel) {
                                             birthDate = regBirthDate,
                                             idDocumentFront = frontFile,
                                             idDocumentBack = backFile,
+                                            fromReferCode = regFromReferCodeInput.ifBlank { null },
                                             onSuccess = {
                                                 Toast.makeText(context, "Account created successfully! Real OTP code sent to $regEmailInput.", Toast.LENGTH_LONG).show()
                                                 viewModel.navigateTo(AppScreen.OTP_VERIFICATION)

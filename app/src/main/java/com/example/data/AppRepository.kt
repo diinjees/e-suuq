@@ -14,6 +14,8 @@ import android.util.Log
 import com.example.network.AuthResult
 import com.example.network.PbOrder
 import com.example.network.PbOrderItem
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.RequestBody.Companion.asRequestBody
 
 class AppRepository(private val context: Context) {
 
@@ -70,7 +72,6 @@ class AppRepository(private val context: Context) {
             list.add(product)
         }
         _allSellerProductsFlow.value = list
-        CacheManager.getInstance().put("seller_products_${product.sellerId}", list, 15 * 60 * 1000L)
         try {
             val dao = AppRoomDatabase.getInstance(context).sellerProductDao()
             dao.insertProduct(product.toEntity())
@@ -287,7 +288,6 @@ class AppRepository(private val context: Context) {
                     }
                 }
                 _allSellerProductsFlow.value = updatedList
-                CacheManager.getInstance().put("seller_products_${product.sellerId}", updatedList, 15 * 60 * 1000L)
                 
                 // Update Room with new ID if created
                 if (createdId.isNotBlank()) {
@@ -317,7 +317,6 @@ class AppRepository(private val context: Context) {
         if (index >= 0) {
             currentList[index] = product
             _allSellerProductsFlow.value = currentList
-            CacheManager.getInstance().put("seller_products_${product.sellerId}", currentList, 15 * 60 * 1000L)
         }
 
         try {
@@ -348,7 +347,8 @@ class AppRepository(private val context: Context) {
                     "variants" to product.variants,
                     "sellerName" to product.sellerName,
                     "rating" to product.rating,
-                    "sold" to product.sold
+                    "sold" to product.sold,
+                    "lowStock" to product.lowStock
                 )
                 // Only include imageResName if it is a real file uploaded to PocketBase, not a local drawable preset (img_* / ic_*)
                 if (!product.imageResName.isNullOrBlank() && !product.imageResName.startsWith("img_") && !product.imageResName.startsWith("ic_")) {
@@ -492,7 +492,17 @@ class AppRepository(private val context: Context) {
         _allDeliveryOrdersFlow.value = emptyList()
     }
     
-    suspend fun getCachedSellerAnalytics(sellerId: String): SellerAnalytics = SellerAnalytics()
+    suspend fun getCachedSellerAnalytics(sellerId: String): SellerAnalytics = withContext(Dispatchers.IO) {
+        val orders = getCachedSellerOrders(sellerId)
+        val products = getCachedSellerProducts(sellerId)
+        val validOrders = orders.filter { !it.status.equals("CANCELLED", ignoreCase = true) }
+        val totalRevenue = validOrders.sumOf { it.totalPrice }
+        SellerAnalytics(
+            totalSales = totalRevenue,
+            totalOrders = validOrders.size,
+            totalProducts = products.size
+        )
+    }
     suspend fun prepopulateIfNeeded() {}
     suspend fun completeTour() {}
 
@@ -949,7 +959,9 @@ class AppRepository(private val context: Context) {
         shippingAddress: LocationShipping = LocationShipping(),
         sellerName: String = "",
         buyerName: String = "",
-        buyerPhone: String = ""
+        buyerPhone: String = "",
+        receiptTitle: String? = null,
+        receiptDetails: String? = null
     ): AuthResult<OrderEntity> = withContext(Dispatchers.IO) {
         try {
             val pbClient = com.example.network.PocketBaseClient(context)
@@ -1007,9 +1019,28 @@ class AppRepository(private val context: Context) {
                 timestamp = System.currentTimeMillis()
             )
             
-            val createdOrder = pbClient.getApi().createOrder(order)
+            var createdOrder = pbClient.getApi().createOrder(order)
             val orderId = createdOrder.id ?: ""
             DebugLogManager.log("AppRepository", "✅ Order created: $orderId")
+
+            if (!receiptTitle.isNullOrBlank() && !receiptDetails.isNullOrBlank()) {
+                try {
+                    DebugLogManager.log("AppRepository", "✍️ Generating dynamic receipt file...")
+                    val receiptFile = generateReceiptImageFile(context, receiptTitle, receiptDetails)
+                    DebugLogManager.log("AppRepository", "📤 Uploading receipt image to PocketBase: ${receiptFile.absolutePath}")
+                    val fields = mapOf<String, okhttp3.RequestBody>()
+                    val requestFile = receiptFile.asRequestBody("image/png".toMediaType())
+                    val filePart = okhttp3.MultipartBody.Part.createFormData(
+                        "paymentReceipt",
+                        receiptFile.name,
+                        requestFile
+                    )
+                    createdOrder = pbClient.getApi().updateOrderWithFiles(orderId, fields, listOf(filePart))
+                    DebugLogManager.log("AppRepository", "✅ Receipt image uploaded successfully! Filename: ${createdOrder.paymentReceipt}")
+                } catch (ex: Exception) {
+                    DebugLogManager.log("AppRepository", "❌ Failed to upload payment receipt: ${ex.message}", isError = true)
+                }
+            }
             
             // 5. Create order_items in PocketBase with the orderId
             val pbOrderItems = orderItems.map { item ->
@@ -1442,11 +1473,22 @@ class AppRepository(private val context: Context) {
 
             pbClient.getApi().updateOrder(orderId, fields)
             
+            val updatedSellerName = extraFields["sellerName"] as? String ?: extraFields["seller_name"] as? String
+            val updatedStoreLoc = extraFields["storeLocation"] as? StoreLocation
+            val updatedPaymentRef = extraFields["paymentReference"] as? String
+            val updatedPaymentBackReceipt = extraFields["paymentBackReceipt"] as? String
+            val updatedPaymentBackRef = extraFields["paymentBackReference"] as? String
+
             // Update local flows for each role independently with the new status and potentially buyer code
             updateLocalOrderStatus(
                 orderId = orderId,
                 newStatus = newStatus,
-                buyerVerifCode = generatedBuyerCode
+                buyerVerifCode = generatedBuyerCode,
+                sellerName = updatedSellerName,
+                storeLocation = updatedStoreLoc,
+                paymentReference = updatedPaymentRef,
+                paymentBackReceipt = updatedPaymentBackReceipt,
+                paymentBackReference = updatedPaymentBackRef
             )
             
             DebugLogManager.log("AppRepository", "✅ Order $orderId status updated to $newStatus")
@@ -1798,7 +1840,10 @@ class AppRepository(private val context: Context) {
             courierPlate = pbOrder.courier_plate,
             deliveryPickup = pbOrder.delivery_pickup,
             isSelfPickup = pbOrder.is_self_pickup,
-            paymentReceipt = pbOrder.payment_receipt,
+            paymentReceipt = pbOrder.paymentReceipt,
+            paymentReference = pbOrder.paymentReference,
+            paymentBackReceipt = pbOrder.paymentBackReceipt,
+            paymentBackReference = pbOrder.paymentBackReference,
             cancellationReason = pbOrder.cancellation_reason,
             timestamp = pbOrder.timestamp,
             created = pbOrder.created,
@@ -1812,7 +1857,12 @@ class AppRepository(private val context: Context) {
         newStatus: String, 
         reason: String? = null,
         buyerVerifCode: String? = null,
-        deliveryVerifCode: String? = null
+        deliveryVerifCode: String? = null,
+        sellerName: String? = null,
+        storeLocation: StoreLocation? = null,
+        paymentReference: String? = null,
+        paymentBackReceipt: String? = null,
+        paymentBackReference: String? = null
     ) {
         val bOrders = _allOrdersFlow.value.toMutableList()
         val bIndex = bOrders.indexOfFirst { it.id == orderId }
@@ -1821,7 +1871,12 @@ class AppRepository(private val context: Context) {
                 status = newStatus,
                 cancellationReason = reason ?: bOrders[bIndex].cancellationReason,
                 buyerVerifCode = buyerVerifCode ?: bOrders[bIndex].buyerVerifCode,
-                deliveryVerifCode = deliveryVerifCode ?: bOrders[bIndex].deliveryVerifCode
+                deliveryVerifCode = deliveryVerifCode ?: bOrders[bIndex].deliveryVerifCode,
+                sellerName = sellerName ?: bOrders[bIndex].sellerName,
+                storeLocation = storeLocation ?: bOrders[bIndex].storeLocation,
+                paymentReference = paymentReference ?: bOrders[bIndex].paymentReference,
+                paymentBackReceipt = paymentBackReceipt ?: bOrders[bIndex].paymentBackReceipt,
+                paymentBackReference = paymentBackReference ?: bOrders[bIndex].paymentBackReference
             )
             _allOrdersFlow.value = bOrders
         }
@@ -1833,7 +1888,12 @@ class AppRepository(private val context: Context) {
                 status = newStatus,
                 cancellationReason = reason ?: sOrders[sIndex].cancellationReason,
                 buyerVerifCode = buyerVerifCode ?: sOrders[sIndex].buyerVerifCode,
-                deliveryVerifCode = deliveryVerifCode ?: sOrders[sIndex].deliveryVerifCode
+                deliveryVerifCode = deliveryVerifCode ?: sOrders[sIndex].deliveryVerifCode,
+                sellerName = sellerName ?: sOrders[sIndex].sellerName,
+                storeLocation = storeLocation ?: sOrders[sIndex].storeLocation,
+                paymentReference = paymentReference ?: sOrders[sIndex].paymentReference,
+                paymentBackReceipt = paymentBackReceipt ?: sOrders[sIndex].paymentBackReceipt,
+                paymentBackReference = paymentBackReference ?: sOrders[sIndex].paymentBackReference
             )
             sOrders[sIndex] = updatedSOrder
             _allSellerOrdersFlow.value = sOrders
@@ -1850,9 +1910,225 @@ class AppRepository(private val context: Context) {
                 status = newStatus,
                 cancellationReason = reason ?: dOrders[dIndex].cancellationReason,
                 buyerVerifCode = buyerVerifCode ?: dOrders[dIndex].buyerVerifCode,
-                deliveryVerifCode = deliveryVerifCode ?: dOrders[dIndex].deliveryVerifCode
+                deliveryVerifCode = deliveryVerifCode ?: dOrders[dIndex].deliveryVerifCode,
+                sellerName = sellerName ?: dOrders[dIndex].sellerName,
+                storeLocation = storeLocation ?: dOrders[dIndex].storeLocation,
+                paymentReference = paymentReference ?: dOrders[dIndex].paymentReference,
+                paymentBackReceipt = paymentBackReceipt ?: dOrders[dIndex].paymentBackReceipt,
+                paymentBackReference = paymentBackReference ?: dOrders[dIndex].paymentBackReference
             )
             _allDeliveryOrdersFlow.value = dOrders
+        }
+    }
+
+    private fun generateReceiptImageFile(context: android.content.Context, title: String, details: String): java.io.File {
+        val width = 600
+        val height = 800
+        val bitmap = android.graphics.Bitmap.createBitmap(width, height, android.graphics.Bitmap.Config.ARGB_8888)
+        val canvas = android.graphics.Canvas(bitmap)
+        
+        // Background color
+        canvas.drawColor(android.graphics.Color.parseColor("#F5F7FA"))
+        
+        val paint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG)
+        
+        // Main receipt container
+        paint.color = android.graphics.Color.WHITE
+        paint.style = android.graphics.Paint.Style.FILL
+        canvas.drawRoundRect(40f, 40f, 560f, 760f, 16f, 16f, paint)
+        
+        // Receipt border
+        paint.color = android.graphics.Color.parseColor("#E4E7EB")
+        paint.style = android.graphics.Paint.Style.STROKE
+        paint.strokeWidth = 2f
+        canvas.drawRoundRect(40f, 40f, 560f, 760f, 16f, 16f, paint)
+        
+        // Header (Green or Purple banner depending on Telebirr vs CBE)
+        val isCbe = title.contains("CBE", ignoreCase = true)
+        val headerColor = if (isCbe) "#4A148C" else "#1B5E20" // CBE Purple vs Telebirr Green
+        paint.color = android.graphics.Color.parseColor(headerColor)
+        paint.style = android.graphics.Paint.Style.FILL
+        canvas.drawRoundRect(40f, 40f, 560f, 160f, 16f, 16f, paint)
+        // Draw rectangle over bottom corners of header to keep them sharp inside the rounded card
+        canvas.drawRect(40f, 100f, 560f, 160f, paint)
+        
+        // Header Title
+        paint.color = android.graphics.Color.WHITE
+        paint.textSize = 28f
+        paint.typeface = android.graphics.Typeface.create(android.graphics.Typeface.DEFAULT, android.graphics.Typeface.BOLD)
+        val headerText = if (isCbe) "CBE Birr Receipt" else "Telebirr Mobile Payment"
+        canvas.drawText(headerText, 80f, 105f, paint)
+        
+        // Header Subtitle
+        paint.textSize = 18f
+        paint.typeface = android.graphics.Typeface.create(android.graphics.Typeface.DEFAULT, android.graphics.Typeface.NORMAL)
+        canvas.drawText("Transaction Success Notification", 80f, 135f, paint)
+        
+        // Receipt Content
+        paint.color = android.graphics.Color.parseColor("#2D3748")
+        paint.textSize = 20f
+        paint.typeface = android.graphics.Typeface.create(android.graphics.Typeface.DEFAULT, android.graphics.Typeface.BOLD)
+        
+        // Receipt ID
+        val receiptId = title.substringAfter("Receipt ID: ").trim()
+        canvas.drawText("Receipt ID: $receiptId", 80f, 210f, paint)
+        
+        // Divider line
+        paint.color = android.graphics.Color.parseColor("#E2E8F0")
+        paint.strokeWidth = 2f
+        canvas.drawLine(80f, 240f, 520f, 240f, paint)
+        
+        // Details parsing
+        paint.color = android.graphics.Color.parseColor("#4A5568")
+        paint.textSize = 18f
+        paint.typeface = android.graphics.Typeface.create(android.graphics.Typeface.DEFAULT, android.graphics.Typeface.NORMAL)
+        
+        var currentY = 280f
+        val lines = details.split("\n")
+        for (line in lines) {
+            if (line.isBlank()) continue
+            if (line.startsWith("Paid:") || line.startsWith("Amount:")) {
+                // Highlight Amount
+                paint.color = android.graphics.Color.parseColor("#1A202C")
+                paint.textSize = 22f
+                paint.typeface = android.graphics.Typeface.create(android.graphics.Typeface.DEFAULT, android.graphics.Typeface.BOLD)
+                canvas.drawText(line, 80f, currentY, paint)
+                currentY += 40f
+                paint.color = android.graphics.Color.parseColor("#4A5568")
+                paint.textSize = 18f
+                paint.typeface = android.graphics.Typeface.create(android.graphics.Typeface.DEFAULT, android.graphics.Typeface.NORMAL)
+            } else {
+                canvas.drawText(line, 80f, currentY, paint)
+                currentY += 35f
+            }
+        }
+        
+        // Success Badge at the bottom
+        currentY = kotlin.math.max(currentY + 20f, 550f)
+        paint.color = android.graphics.Color.parseColor("#E6FFFA")
+        paint.style = android.graphics.Paint.Style.FILL
+        canvas.drawRoundRect(80f, currentY, 520f, currentY + 60f, 8f, 8f, paint)
+        
+        paint.color = android.graphics.Color.parseColor("#319795")
+        paint.style = android.graphics.Paint.Style.STROKE
+        paint.strokeWidth = 1.5f
+        canvas.drawRoundRect(80f, currentY, 520f, currentY + 60f, 8f, 8f, paint)
+        
+        paint.color = android.graphics.Color.parseColor("#234E52")
+        paint.style = android.graphics.Paint.Style.FILL
+        paint.textSize = 18f
+        paint.typeface = android.graphics.Typeface.create(android.graphics.Typeface.DEFAULT, android.graphics.Typeface.BOLD)
+        canvas.drawText("VERIFIED TRANSACTION • SUCCESS", 110f, currentY + 36f, paint)
+        
+        // Security Seal / Barcode
+        currentY += 100f
+        paint.color = android.graphics.Color.parseColor("#A0AEC0")
+        paint.strokeWidth = 3f
+        var startX = 140f
+        while (startX < 460f) {
+            val barWidth = (5..15).random().toFloat()
+            canvas.drawLine(startX, currentY, startX, currentY + 35f, paint)
+            startX += barWidth + (3..8).random().toFloat()
+        }
+        
+        // Save to cache file
+        val file = java.io.File(context.cacheDir, "receipt_${System.currentTimeMillis()}.png")
+        val out = java.io.FileOutputStream(file)
+        bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, out)
+        out.flush()
+        out.close()
+        return file
+    }
+
+    suspend fun getReferEarnUser(userId: String, userReferCode: String = ""): com.example.network.ReferEarnUser = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+        if (userId.isBlank() && userReferCode.isBlank()) {
+            return@withContext com.example.network.ReferEarnUser()
+        }
+        try {
+            val pbClient = com.example.network.PocketBaseClient(context)
+            
+            // 1. Try filtering by id field
+            if (userId.isNotBlank()) {
+                try {
+                    val resp2 = pbClient.getApi().getReferEarnUsers(filter = "id = '$userId'")
+                    val item2 = resp2.items.firstOrNull()
+                    if (item2 != null) {
+                        return@withContext item2.toDomainModel()
+                    }
+                } catch (e2: Exception) {
+                    DebugLogManager.log("AppRepository", "Filter 'id = $userId' failed: ${e2.message}")
+                }
+            }
+
+            // 3. Try filtering by referCode field
+            if (userReferCode.isNotBlank()) {
+                try {
+                    val resp3 = pbClient.getApi().getReferEarnUsers(filter = "referCode = '$userReferCode'")
+                    val item3 = resp3.items.firstOrNull()
+                    if (item3 != null) {
+                        return@withContext item3.toDomainModel()
+                    }
+                } catch (e3: Exception) {
+                    DebugLogManager.log("AppRepository", "Filter 'referCode = $userReferCode' failed: ${e3.message}")
+                }
+            }
+
+            // 4. Fallback: Get records without filter and match locally
+            try {
+                val respAll = pbClient.getApi().getReferEarnUsers(page = 1, perPage = 100)
+                val matched = respAll.items.firstOrNull { item ->
+                    (userId.isNotBlank() && (item.user == userId || item.id == userId)) ||
+                    (userReferCode.isNotBlank() && item.referCode == userReferCode)
+                }
+                if (matched != null) {
+                    return@withContext matched.toDomainModel()
+                }
+            } catch (eAll: Exception) {
+                DebugLogManager.log("AppRepository", "Fallback list referEarnUser failed: ${eAll.message}")
+            }
+
+            return@withContext com.example.network.ReferEarnUser(
+                id = userId,
+                user = userId,
+                referCode = userReferCode,
+                referralCount = 0,
+                totalMoney = 0.0
+            )
+        } catch (e: Exception) {
+            DebugLogManager.log("AppRepository", "Failed to fetch referEarnUser view collection: ${e.message}", isError = true)
+            return@withContext com.example.network.ReferEarnUser(
+                id = userId,
+                user = userId,
+                referCode = userReferCode,
+                referralCount = 0,
+                totalMoney = 0.0
+            )
+        }
+    }
+
+    suspend fun createWithdrawalRequest(
+        userId: String,
+        amount: Double,
+        method: String,
+        accountNumber: String,
+        pendingUserIds: List<String>
+    ): Boolean = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+        try {
+            val pbClient = com.example.network.PocketBaseClient(context)
+            val body = mapOf(
+                "userId" to userId,
+                "referredUserIds" to pendingUserIds,
+                "totalAmount" to amount,
+                "status" to "pending",
+                "paymentMethod" to method,
+                "paymentAccount" to accountNumber,
+                "reference" to ""
+            )
+            pbClient.getApi().createWithdrawReferEarn(body)
+            true
+        } catch (e: Exception) {
+            DebugLogManager.log("AppRepository", "Failed to create WithdrawReferEarn record: ${e.message}", isError = true)
+            throw e
         }
     }
 }

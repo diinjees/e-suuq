@@ -253,14 +253,9 @@ class PocketBaseSyncEngine(
             }
             
             // Save all products
-            val sellerList = mutableListOf<SellerProductEntity>()
             allProducts.forEach { pbProduct ->
                 val entity = convertSellerProductEntity(pbProduct)
-                sellerList.add(entity)
                 repository.saveSyncedSellerProduct(entity)
-            }
-            if (sellerList.isNotEmpty()) {
-                CacheManager.getInstance().put("seller_products_$sellerId", sellerList, 15 * 60 * 1000L)
             }
             
             lastSyncProducts = syncTime
@@ -542,6 +537,7 @@ class PocketBaseSyncEngine(
             rating = pb.rating ?: 4.5,
             cost = pb.cost ?: 0.0,
             sold = pb.sold ?: 0,
+            lowStock = pb.lowStock ?: 3,
             created = pb.created,
             updated = pb.updated
         )
@@ -611,7 +607,10 @@ class PocketBaseSyncEngine(
             courierPlate = pb.courier_plate,
             deliveryPickup = pb.delivery_pickup,
             isSelfPickup = pb.is_self_pickup,
-            paymentReceipt = pb.payment_receipt,
+            paymentReceipt = pb.paymentReceipt,
+            paymentReference = pb.paymentReference,
+            paymentBackReceipt = pb.paymentBackReceipt,
+            paymentBackReference = pb.paymentBackReference,
             cancellationReason = pb.cancellation_reason,
             created = pb.created,
             updated = pb.updated
@@ -645,6 +644,8 @@ class PocketBaseSyncEngine(
             isVerified = pb.verified ?: true,
             isApproved = pb.isApproved ?: true,
             isEmailVerified = pb.verified ?: false,
+            referCode = pb.referCode ?: "",
+            fromReferCode = pb.fromReferCode ?: "",
             created = pb.created,
             updated = pb.updated,
             

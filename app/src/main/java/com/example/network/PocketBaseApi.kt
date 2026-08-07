@@ -216,6 +216,14 @@ interface PocketBaseApi {
         @Body order: Map<String, @JvmSuppressWildcards Any>
     ): PbOrder
 
+    @Multipart
+    @PATCH("api/collections/orders/records/{id}")
+    suspend fun updateOrderWithFiles(
+        @Path("id") id: String,
+        @PartMap fields: Map<String, @JvmSuppressWildcards RequestBody>,
+        @Part files: List<MultipartBody.Part>
+    ): PbOrder
+
     // ==========================================
     // CHAT MESSAGES
     // ==========================================
@@ -425,6 +433,27 @@ interface PocketBaseApi {
         @Query("page") page: Int = 1,
         @Query("perPage") perPage: Int = 50
     ): PbListResponse<PbSellerMonthlyStats>
+
+    // ==========================================
+    // REFER AND EARN USER (referEarnUser)
+    // ==========================================
+
+    @GET("api/collections/referEarnUser/records")
+    suspend fun getReferEarnUsers(
+        @Query("filter") filter: String? = null,
+        @Query("sort") sort: String? = "-created",
+        @Query("page") page: Int = 1,
+        @Query("perPage") perPage: Int = 50
+    ): PbListResponse<PbReferEarnUser>
+
+    // ==========================================
+    // WITHDRAW REFER EARN (WithdrawReferEarn)
+    // ==========================================
+
+    @POST("api/collections/WithdrawReferEarn/records")
+    suspend fun createWithdrawReferEarn(
+        @Body body: Map<String, @JvmSuppressWildcards Any>
+    ): com.google.gson.JsonObject
 }
 
 // ==========================================

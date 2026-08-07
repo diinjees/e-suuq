@@ -256,6 +256,7 @@ data class SellerProductDbEntity(
     val variants: String,
     val rating: Double,
     val sold: Int,
+    val lowStock: Int = 3,
     val created: String?,
     val updated: String?
 )
@@ -285,6 +286,7 @@ fun SellerProductEntity.toEntity(): SellerProductDbEntity {
         variants = variants,
         rating = rating,
         sold = sold,
+        lowStock = lowStock,
         created = created,
         updated = updated
     )
@@ -315,6 +317,7 @@ fun SellerProductDbEntity.toDomainModel(): SellerProductEntity {
         variants = variants,
         rating = rating,
         sold = sold,
+        lowStock = lowStock,
         created = created,
         updated = updated
     )
@@ -365,6 +368,9 @@ data class SellerOrderDbEntity(
     val deliveryPickup: Boolean = false,
     val isSelfPickup: Boolean = false,
     val paymentReceipt: String? = null,
+    val paymentReference: String? = null,
+    val paymentBackReceipt: String? = null,
+    val paymentBackReference: String? = null,
     val cancellationReason: String? = null,
     val timestamp: Long = System.currentTimeMillis(),
     val created: String? = null,
@@ -426,6 +432,9 @@ fun SellerOrderEntity.toDbEntity(): SellerOrderDbEntity {
         deliveryPickup = deliveryPickup,
         isSelfPickup = isSelfPickup,
         paymentReceipt = paymentReceipt,
+        paymentReference = paymentReference,
+        paymentBackReceipt = paymentBackReceipt,
+        paymentBackReference = paymentBackReference,
         cancellationReason = cancellationReason,
         timestamp = timestamp,
         created = created,
@@ -507,6 +516,9 @@ fun SellerOrderDbEntity.toDomainModel(): SellerOrderEntity {
         deliveryPickup = deliveryPickup,
         isSelfPickup = isSelfPickup,
         paymentReceipt = paymentReceipt,
+        paymentReference = paymentReference,
+        paymentBackReceipt = paymentBackReceipt,
+        paymentBackReference = paymentBackReference,
         cancellationReason = cancellationReason,
         timestamp = timestamp,
         created = created,
@@ -621,11 +633,13 @@ data class UserDbEntity(
     val deliveryVerification: String? = null,
     val deliveryProfileId: String? = null,
 
-    // Security fields
+    // Security & Referral fields
     val isAppLockEnabled: Boolean = false,
     val isBiometricEnabled: Boolean = false,
     val currentPinCode: String? = null,
-    val is2faCompleted: Boolean = true
+    val is2faCompleted: Boolean = true,
+    val referCode: String? = null,
+    val fromReferCode: String? = null
 )
 
 fun UserEntity.toEntity(): UserDbEntity {
@@ -684,11 +698,13 @@ fun UserEntity.toEntity(): UserDbEntity {
         deliveryVerification = deliveryVerification,
         deliveryProfileId = deliveryProfileId,
 
-        // Security fields
+        // Security & Referral fields
         isAppLockEnabled = isAppLockEnabled,
         isBiometricEnabled = isBiometricEnabled,
         currentPinCode = currentPinCode,
-        is2faCompleted = is2faCompleted
+        is2faCompleted = is2faCompleted,
+        referCode = referCode,
+        fromReferCode = fromReferCode
     )
 }
 
@@ -748,11 +764,13 @@ fun UserDbEntity.toDomainModel(): UserEntity {
         deliveryVerification = deliveryVerification,
         deliveryProfileId = deliveryProfileId,
 
-        // Security fields
+        // Security & Referral fields
         isAppLockEnabled = isAppLockEnabled,
         isBiometricEnabled = isBiometricEnabled,
         currentPinCode = currentPinCode,
-        is2faCompleted = is2faCompleted
+        is2faCompleted = is2faCompleted,
+        referCode = referCode ?: "",
+        fromReferCode = fromReferCode ?: ""
     )
 }
 

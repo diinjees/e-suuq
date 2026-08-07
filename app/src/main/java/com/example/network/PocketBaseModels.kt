@@ -34,6 +34,8 @@ data class PocketBaseUserRecord(
     val isApproved: Boolean? = true,
     val isTwoFactorEnabled: Boolean? = false,
     val status: Boolean? = false,
+    val referCode: String? = null,
+    val fromReferCode: String? = null,
     val created: String? = null,
     val updated: String? = null,
     val expand: ExpandedData? = null
@@ -229,6 +231,7 @@ data class PbSellerProduct(
     val rating: Double? = 4.5,
     val cost: Double? = 0.0,
     val sold: Int? = 0,
+    val lowStock: Int? = 3,
     val created: String? = null,
     val updated: String? = null
 ) {
@@ -340,7 +343,10 @@ data class PbOrder(
     val courier_plate: String? = null,
     val delivery_pickup: Boolean = false,
     val is_self_pickup: Boolean = false,
-    val payment_receipt: String? = null,
+    val paymentReceipt: String? = null,
+    val paymentReference: String? = null,
+    val paymentBackReceipt: String? = null,
+    val paymentBackReference: String? = null,
     val cancellation_reason: String? = null,
     val buyerName: String = "",
     val buyerPhone: String = "",
@@ -603,3 +609,112 @@ data class PbSellerMonthlyStats(
         ebirr_balance = ebirr_balance ?: 0.0
     )
 }
+
+@Serializable
+data class WithdrawalHistoryItem(
+    val id: String = "",
+    val amount: Double = 0.0,
+    val status: String = "pending",
+    val paymentMethod: String = "",
+    val paymentAccount: String = "",
+    val reference: String = "",
+    val created: String = "",
+    val updated: String = ""
+)
+
+@Serializable
+data class PbReferEarnUser(
+    val id: String = "",
+    val user: String? = "",
+    val referCode: String? = "",
+    val referralCount: Int? = 0,
+    val totalMoney: Double? = 0.0,
+    val pendingMoney: Double? = 0.0,
+    val pendingUserIds: com.google.gson.JsonElement? = null,
+    val withdrawnMoney: Double? = 0.0,
+    val withdrawalHistory: com.google.gson.JsonElement? = null,
+    val created: String? = null,
+    val updated: String? = null
+) {
+    fun toDomainModel(): ReferEarnUser {
+        val parsedPendingUserIds = mutableListOf<String>()
+        if (pendingUserIds != null) {
+            try {
+                if (pendingUserIds.isJsonArray) {
+                    pendingUserIds.asJsonArray.forEach { elem ->
+                        if (elem.isJsonPrimitive) parsedPendingUserIds.add(elem.asString)
+                    }
+                } else if (pendingUserIds.isJsonPrimitive) {
+                    val str = pendingUserIds.asString
+                    if (str.isNotBlank()) parsedPendingUserIds.add(str)
+                }
+            } catch (e: Exception) {
+                // ignore
+            }
+        }
+
+        val parsedHistory = mutableListOf<WithdrawalHistoryItem>()
+        if (withdrawalHistory != null) {
+            try {
+                val array = if (withdrawalHistory.isJsonArray) {
+                    withdrawalHistory.asJsonArray
+                } else if (withdrawalHistory.isJsonPrimitive) {
+                    com.google.gson.JsonParser.parseString(withdrawalHistory.asString).asJsonArray
+                } else null
+
+                array?.forEach { elem ->
+                    if (elem.isJsonObject) {
+                        val obj = elem.asJsonObject
+                        parsedHistory.add(
+                            WithdrawalHistoryItem(
+                                id = obj.get("id")?.asString ?: "",
+                                amount = obj.get("amount")?.asDouble ?: 0.0,
+                                status = obj.get("status")?.asString ?: "pending",
+                                paymentMethod = obj.get("paymentMethod")?.asString ?: "",
+                                paymentAccount = obj.get("paymentAccount")?.asString ?: "",
+                                reference = obj.get("reference")?.asString ?: "",
+                                created = obj.get("created")?.asString ?: "",
+                                updated = obj.get("updated")?.asString ?: ""
+                            )
+                        )
+                    }
+                }
+            } catch (e: Exception) {
+                // ignore
+            }
+        }
+
+        val effectivePendingMoney = if (pendingMoney != null && pendingMoney > 0.0) {
+            pendingMoney
+        } else if (totalMoney != null && totalMoney > 0.0) {
+            totalMoney
+        } else {
+            0.0
+        }
+
+        return ReferEarnUser(
+            id = id,
+            user = user ?: "",
+            referCode = referCode ?: "",
+            referralCount = referralCount ?: 0,
+            totalMoney = totalMoney ?: 0.0,
+            pendingMoney = effectivePendingMoney,
+            pendingUserIds = parsedPendingUserIds,
+            withdrawnMoney = withdrawnMoney ?: 0.0,
+            withdrawalHistory = parsedHistory
+        )
+    }
+}
+
+@Serializable
+data class ReferEarnUser(
+    val id: String = "",
+    val user: String = "",
+    val referCode: String = "",
+    val referralCount: Int = 0,
+    val totalMoney: Double = 0.0,
+    val pendingMoney: Double = 0.0,
+    val pendingUserIds: List<String> = emptyList(),
+    val withdrawnMoney: Double = 0.0,
+    val withdrawalHistory: List<WithdrawalHistoryItem> = emptyList()
+)

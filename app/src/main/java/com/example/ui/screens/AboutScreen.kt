@@ -20,6 +20,9 @@ import com.example.ui.loc
 
 @Composable
 fun AboutScreen(viewModel: AppViewModel) {
+    androidx.activity.compose.BackHandler {
+        viewModel.navigateTo(AppScreen.MAIN)
+    }
     Scaffold(
         topBar = {
             OptInHeader(

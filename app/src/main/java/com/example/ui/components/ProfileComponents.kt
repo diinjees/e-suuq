@@ -347,6 +347,16 @@ fun ProfileMenuMain(
                 )
                 Divider(color = MaterialTheme.colorScheme.outlineVariant)
 
+                // 4. Refer & Earn
+                ProfileMenuItem(
+                    icon = Icons.Default.CardGiftcard,
+                    title = "Refer & Earn",
+                    subtitle = "Invite friends, earn points & referral cash",
+                    testTag = "menu_refer_and_earn",
+                    onClick = { onNavigateToSub("REFER_AND_EARN") }
+                )
+                Divider(color = MaterialTheme.colorScheme.outlineVariant)
+
                 // 4. Help Center
                 ProfileMenuItem(
                     icon = Icons.Default.SupportAgent,

@@ -176,6 +176,30 @@ fun CustomerFeedbackScreen(
     var replyDrafts by remember { mutableStateOf(mapOf<String, String>()) }
     var activeReplyTarget by remember { mutableStateOf<String?>(null) } // Name of buyer currently being replied to
 
+    // Dynamic Rating Calculations based on actual user reviews
+    val totalRatingsCount = reviews.size
+    val parsedRatings = remember(reviews) {
+        reviews.mapNotNull { 
+            it.rating.removePrefix("★").trim().toDoubleOrNull()
+        }
+    }
+    val avgRating = remember(parsedRatings) {
+        if (parsedRatings.isNotEmpty()) parsedRatings.average() else 5.0
+    }
+    val formattedAvgRating = String.format(java.util.Locale.US, "%.1f", avgRating)
+
+    val count5Star = remember(parsedRatings) { parsedRatings.count { it >= 4.5 } }
+    val count4Star = remember(parsedRatings) { parsedRatings.count { it in 3.5..<4.5 } }
+    val count3Star = remember(parsedRatings) { parsedRatings.count { it in 2.5..<3.5 } }
+    val count2Star = remember(parsedRatings) { parsedRatings.count { it in 1.5..<2.5 } }
+    val count1Star = remember(parsedRatings) { parsedRatings.count { it < 1.5 } }
+
+    val pct5 = if (totalRatingsCount > 0) count5Star.toFloat() / totalRatingsCount else 0f
+    val pct4 = if (totalRatingsCount > 0) count4Star.toFloat() / totalRatingsCount else 0f
+    val pct3 = if (totalRatingsCount > 0) count3Star.toFloat() / totalRatingsCount else 0f
+    val pct2 = if (totalRatingsCount > 0) count2Star.toFloat() / totalRatingsCount else 0f
+    val pct1 = if (totalRatingsCount > 0) count1Star.toFloat() / totalRatingsCount else 0f
+
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -219,7 +243,7 @@ fun CustomerFeedbackScreen(
                 .verticalScroll(rememberScrollState()),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
-            // Reputation Summary Card
+            // Dynamic Reputation Summary Card
             Card(
                 modifier = Modifier.fillMaxWidth(),
                 shape = RoundedCornerShape(12.dp),
@@ -236,7 +260,7 @@ fun CustomerFeedbackScreen(
                         modifier = Modifier.weight(1.2f)
                     ) {
                         Text(
-                            text = "4.9",
+                            text = formattedAvgRating,
                             style = MaterialTheme.typography.displayMedium.copy(fontWeight = FontWeight.Bold),
                             color = MaterialTheme.colorScheme.primary
                         )
@@ -244,28 +268,34 @@ fun CustomerFeedbackScreen(
                             horizontalArrangement = Arrangement.spacedBy(2.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            repeat(5) {
+                            val fullStars = kotlin.math.round(avgRating).toInt()
+                            repeat(5) { index ->
                                 Icon(
                                     imageVector = Icons.Default.Star,
                                     contentDescription = null,
-                                    tint = BrandGoldSecondary,
+                                    tint = if (index < fullStars) BrandGoldSecondary else MaterialTheme.colorScheme.outlineVariant,
                                     modifier = Modifier.size(16.dp)
                                 )
                             }
                         }
                         Spacer(modifier = Modifier.height(4.dp))
                         Text(
-                            text = "32 Total Ratings",
+                            text = "$totalRatingsCount Total Ratings",
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.outline
                         )
                         Spacer(modifier = Modifier.height(8.dp))
                         Card(
-                            colors = CardDefaults.cardColors(containerColor = BrandGreenPrimary.copy(alpha = 0.15f))
+                            colors = CardDefaults.cardColors(
+                                containerColor = if (avgRating >= 4.0) BrandGreenPrimary.copy(alpha = 0.15f) else BrandGoldSecondary.copy(alpha = 0.15f)
+                            )
                         ) {
                             Text(
-                                text = "TOP RATED STORE",
-                                style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold, color = BrandGreenPrimary),
+                                text = if (avgRating >= 4.5) "TOP RATED STORE" else if (avgRating >= 4.0) "HIGHLY RATED" else "VERIFIED STORE",
+                                style = MaterialTheme.typography.labelSmall.copy(
+                                    fontWeight = FontWeight.Bold,
+                                    color = if (avgRating >= 4.0) BrandGreenPrimary else BrandGoldSecondary
+                                ),
                                 modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
                                 textAlign = TextAlign.Center
                             )
@@ -276,11 +306,11 @@ fun CustomerFeedbackScreen(
 
                     Column(modifier = Modifier.weight(2f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                         listOf(
-                            "5 Star" to 0.92f,
-                            "4 Star" to 0.06f,
-                            "3 Star" to 0.02f,
-                            "2 Star" to 0.0f,
-                            "1 Star" to 0.0f
+                            "5 Star" to pct5,
+                            "4 Star" to pct4,
+                            "3 Star" to pct3,
+                            "2 Star" to pct2,
+                            "1 Star" to pct1
                         ).forEach { (label, pct) ->
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
@@ -390,13 +420,20 @@ fun CustomerFeedbackScreen(
                         listOf(BrandGreenPrimary, BrandGoldSecondary, Color(0xFF1E3A8A), Color(0xFF6B21A8), Color(0xFF0369A1))[kotlin.math.abs(hash) % 5]
                     }
 
+                    val numRating = item.rating.removePrefix("★").trim().toDoubleOrNull() ?: 5.0
+                    val starCount = numRating.toInt()
+
                     Card(
-                        modifier = Modifier.fillMaxWidth().testTag("review_card_${item.name.replace(" ", "_")}"),
-                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("review_card_${item.name.replace(" ", "_")}"),
+                        shape = RoundedCornerShape(16.dp),
+                        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
                         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
+                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
                     ) {
-                        Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                            // Header Row: Avatar, User Info, Rating Badge
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
                                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -404,12 +441,13 @@ fun CustomerFeedbackScreen(
                             ) {
                                 Row(
                                     verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                                    horizontalArrangement = Arrangement.spacedBy(12.dp)
                                 ) {
                                     Box(
                                         modifier = Modifier
-                                            .size(36.dp)
-                                            .background(themeColor.copy(alpha = 0.15f), CircleShape),
+                                            .size(42.dp)
+                                            .background(themeColor.copy(alpha = 0.15f), CircleShape)
+                                            .border(1.5.dp, themeColor.copy(alpha = 0.4f), CircleShape),
                                         contentAlignment = Alignment.Center
                                     ) {
                                         Text(
@@ -418,11 +456,42 @@ fun CustomerFeedbackScreen(
                                             color = themeColor
                                         )
                                     }
-                                    Column {
-                                        Text(
-                                            text = item.name,
-                                            style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold)
-                                        )
+                                    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                        ) {
+                                            Text(
+                                                text = item.name,
+                                                style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold)
+                                            )
+                                            // Verified Buyer Badge
+                                            Surface(
+                                                color = BrandGreenPrimary.copy(alpha = 0.12f),
+                                                shape = RoundedCornerShape(4.dp)
+                                            ) {
+                                                Row(
+                                                    modifier = Modifier.padding(horizontal = 5.dp, vertical = 2.dp),
+                                                    verticalAlignment = Alignment.CenterVertically,
+                                                    horizontalArrangement = Arrangement.spacedBy(2.dp)
+                                                ) {
+                                                    Icon(
+                                                        imageVector = Icons.Default.Check,
+                                                        contentDescription = "Verified Buyer",
+                                                        tint = BrandGreenPrimary,
+                                                        modifier = Modifier.size(10.dp)
+                                                    )
+                                                    Text(
+                                                        text = "Verified",
+                                                        style = MaterialTheme.typography.labelSmall.copy(
+                                                            fontSize = 9.sp,
+                                                            fontWeight = FontWeight.Bold,
+                                                            color = BrandGreenPrimary
+                                                        )
+                                                    )
+                                                }
+                                            }
+                                        }
                                         Text(
                                             text = item.date,
                                             style = MaterialTheme.typography.labelSmall,
@@ -430,37 +499,78 @@ fun CustomerFeedbackScreen(
                                         )
                                     }
                                 }
-                                Card(
-                                    colors = CardDefaults.cardColors(containerColor = BrandGoldSecondary.copy(alpha = 0.15f))
+
+                                // Star Rating Pill
+                                Surface(
+                                    color = BrandGoldSecondary.copy(alpha = 0.15f),
+                                    shape = RoundedCornerShape(20.dp),
+                                    border = BorderStroke(1.dp, BrandGoldSecondary.copy(alpha = 0.3f))
                                 ) {
                                     Row(
-                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
-                                        horizontalArrangement = Arrangement.spacedBy(4.dp),
+                                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
+                                        horizontalArrangement = Arrangement.spacedBy(3.dp),
                                         verticalAlignment = Alignment.CenterVertically
                                     ) {
-                                        Icon(Icons.Default.Star, contentDescription = null, tint = BrandGoldSecondary, modifier = Modifier.size(12.dp))
+                                        repeat(5) { idx ->
+                                            Icon(
+                                                imageVector = Icons.Default.Star,
+                                                contentDescription = null,
+                                                tint = if (idx < starCount) BrandGoldSecondary else MaterialTheme.colorScheme.outlineVariant,
+                                                modifier = Modifier.size(13.dp)
+                                            )
+                                        }
+                                        Spacer(modifier = Modifier.width(2.dp))
                                         Text(
-                                            text = item.rating.removePrefix("★"),
-                                            style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Bold, color = BrandGoldSecondary)
+                                            text = String.format(java.util.Locale.US, "%.1f", numRating),
+                                            style = MaterialTheme.typography.labelSmall.copy(
+                                                fontWeight = FontWeight.Bold,
+                                                color = BrandGoldSecondary
+                                            )
                                         )
                                     }
                                 }
                             }
 
-                            Text(
-                                text = "Purchased: ${item.product}",
-                                style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Medium),
-                                color = MaterialTheme.colorScheme.primary
-                            )
+                            // Purchased Product Tag
+                            Surface(
+                                color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.3f),
+                                shape = RoundedCornerShape(8.dp),
+                                border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.15f))
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.ShoppingBag,
+                                        contentDescription = null,
+                                        tint = MaterialTheme.colorScheme.primary,
+                                        modifier = Modifier.size(14.dp)
+                                    )
+                                    Text(
+                                        text = "Item: ${item.product}",
+                                        style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.SemiBold),
+                                        color = MaterialTheme.colorScheme.primary
+                                    )
+                                }
+                            }
 
-                            Text(
-                                text = item.comment,
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = MaterialTheme.colorScheme.onSurface
-                            )
+                            // Buyer Comment Box
+                            Surface(
+                                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.25f),
+                                shape = RoundedCornerShape(10.dp)
+                            ) {
+                                Text(
+                                    text = "“${item.comment}”",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = MaterialTheme.colorScheme.onSurface,
+                                    modifier = Modifier.padding(12.dp)
+                                )
+                            }
 
-                            // Response Box (existing reply)
-                            if (item.replyText != null) {
+                            // Response Box (existing reply or edit mode)
+                            if (item.replyText != null && activeReplyTarget != item.name) {
                                 Column(
                                     modifier = Modifier
                                         .fillMaxWidth()
@@ -481,11 +591,18 @@ fun CustomerFeedbackScreen(
                                                 color = BrandGreenPrimary
                                             )
                                         }
-                                        Text(
-                                            text = "Sent",
-                                            style = MaterialTheme.typography.labelSmall,
-                                            color = MaterialTheme.colorScheme.outline
-                                        )
+                                        TextButton(
+                                            onClick = {
+                                                activeReplyTarget = item.name
+                                                replyDrafts = replyDrafts + (item.name to (item.replyText ?: ""))
+                                            },
+                                            contentPadding = PaddingValues(horizontal = 6.dp, vertical = 0.dp),
+                                            modifier = Modifier.height(26.dp)
+                                        ) {
+                                            Icon(Icons.Default.Edit, contentDescription = null, modifier = Modifier.size(12.dp), tint = MaterialTheme.colorScheme.primary)
+                                            Spacer(modifier = Modifier.width(4.dp))
+                                            Text("Edit Response", style = MaterialTheme.typography.labelSmall)
+                                        }
                                     }
                                     Spacer(modifier = Modifier.height(4.dp))
                                     Text(
@@ -494,85 +611,83 @@ fun CustomerFeedbackScreen(
                                         color = MaterialTheme.colorScheme.onSurfaceVariant
                                     )
                                 }
-                            } else {
+                            } else if (item.replyText == null && activeReplyTarget != item.name) {
                                 // No reply yet, show Reply draft trigger
-                                if (activeReplyTarget != item.name) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.End
+                                ) {
+                                    TextButton(
+                                        onClick = { 
+                                            activeReplyTarget = item.name 
+                                            replyDrafts = replyDrafts + (item.name to "")
+                                        },
+                                        modifier = Modifier.testTag("reply_trigger_${item.name.replace(" ", "_")}"),
+                                        colors = ButtonDefaults.textButtonColors(contentColor = BrandGreenPrimary)
+                                    ) {
+                                        Icon(Icons.Default.Reply, contentDescription = null, modifier = Modifier.size(16.dp))
+                                        Spacer(modifier = Modifier.width(4.dp))
+                                        Text("Reply to Buyer", style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Bold))
+                                    }
+                                }
+                            } else {
+                                // Display the interactive text input to reply / edit response
+                                val draftText = replyDrafts[item.name] ?: item.replyText ?: ""
+                                Column(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.2f), RoundedCornerShape(8.dp))
+                                        .padding(12.dp),
+                                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    Text(
+                                        text = if (item.replyText != null) "Edit reply to ${item.name}:" else "Write a reply to ${item.name}:",
+                                        style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Bold)
+                                    )
+                                    OutlinedTextField(
+                                        value = draftText,
+                                        onValueChange = { newText ->
+                                            replyDrafts = replyDrafts + (item.name to newText)
+                                        },
+                                        modifier = Modifier.fillMaxWidth().testTag("reply_input_${item.name.replace(" ", "_")}"),
+                                        placeholder = { Text("e.g. Thank you for your review! We are delighted that you enjoyed...") },
+                                        maxLines = 4,
+                                        singleLine = false,
+                                        textStyle = MaterialTheme.typography.bodySmall,
+                                        colors = OutlinedTextFieldDefaults.colors(
+                                            focusedBorderColor = BrandGreenPrimary,
+                                            unfocusedBorderColor = MaterialTheme.colorScheme.outlineVariant
+                                        )
+                                    )
                                     Row(
                                         modifier = Modifier.fillMaxWidth(),
-                                        horizontalArrangement = Arrangement.End
+                                        horizontalArrangement = Arrangement.spacedBy(8.dp, alignment = Alignment.End)
                                     ) {
                                         TextButton(
-                                            onClick = { 
-                                                activeReplyTarget = item.name 
-                                                replyDrafts = replyDrafts + (item.name to "")
-                                            },
-                                            modifier = Modifier.testTag("reply_trigger_${item.name.replace(" ", "_")}"),
-                                            colors = ButtonDefaults.textButtonColors(contentColor = BrandGreenPrimary)
+                                            onClick = { activeReplyTarget = null }
                                         ) {
-                                            Icon(Icons.Default.Reply, contentDescription = null, modifier = Modifier.size(16.dp))
-                                            Spacer(modifier = Modifier.width(4.dp))
-                                            Text("Reply to Buyer", style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Bold))
+                                            Text("Cancel", style = MaterialTheme.typography.bodySmall)
                                         }
-                                    }
-                                } else {
-                                    // Display the interactive text input to reply
-                                    val draftText = replyDrafts[item.name] ?: ""
-                                    Column(
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.2f), RoundedCornerShape(8.dp))
-                                            .padding(12.dp),
-                                        verticalArrangement = Arrangement.spacedBy(8.dp)
-                                    ) {
-                                        Text(
-                                            text = "Write a reply to ${item.name}:",
-                                            style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Bold)
-                                        )
-                                        OutlinedTextField(
-                                            value = draftText,
-                                            onValueChange = { newText ->
-                                                replyDrafts = replyDrafts + (item.name to newText)
+                                        Button(
+                                            onClick = {
+                                                if (draftText.isNotBlank()) {
+                                                    onReviewsUpdate(reviews.map { r ->
+                                                        if (r.name == item.name || (r.id != null && r.id == item.id)) {
+                                                            r.copy(replyText = draftText)
+                                                        } else r
+                                                    })
+                                                    activeReplyTarget = null
+                                                    android.widget.Toast.makeText(context, "Reply saved successfully!", android.widget.Toast.LENGTH_SHORT).show()
+                                                } else {
+                                                    android.widget.Toast.makeText(context, "Please enter your reply text", android.widget.Toast.LENGTH_SHORT).show()
+                                                }
                                             },
-                                            modifier = Modifier.fillMaxWidth().testTag("reply_input_${item.name.replace(" ", "_")}"),
-                                            placeholder = { Text("e.g. Thank you for your review! We are delighted that you enjoyed...") },
-                                            maxLines = 4,
-                                            singleLine = false,
-                                            textStyle = MaterialTheme.typography.bodySmall,
-                                            colors = OutlinedTextFieldDefaults.colors(
-                                                focusedBorderColor = BrandGreenPrimary,
-                                                unfocusedBorderColor = MaterialTheme.colorScheme.outlineVariant
-                                            )
-                                        )
-                                        Row(
-                                            modifier = Modifier.fillMaxWidth(),
-                                            horizontalArrangement = Arrangement.spacedBy(8.dp, alignment = Alignment.End)
+                                            modifier = Modifier.testTag("reply_submit_${item.name.replace(" ", "_")}"),
+                                            colors = ButtonDefaults.buttonColors(containerColor = BrandGreenPrimary)
                                         ) {
-                                            TextButton(
-                                                onClick = { activeReplyTarget = null }
-                                            ) {
-                                                Text("Cancel", style = MaterialTheme.typography.bodySmall)
-                                            }
-                                            Button(
-                                                onClick = {
-                                                    if (draftText.isNotBlank()) {
-                                                        onReviewsUpdate(reviews.map { r ->
-                                                            if (r.name == item.name) {
-                                                                r.copy(replyText = draftText)
-                                                            } else r
-                                                        })
-                                                        activeReplyTarget = null
-                                                        android.widget.Toast.makeText(context, "Reply submitted successfully!", android.widget.Toast.LENGTH_SHORT).show()
-                                                    } else {
-                                                        android.widget.Toast.makeText(context, "Please enter your reply text", android.widget.Toast.LENGTH_SHORT).show()
-                                                    }
-                                                },
-                                                modifier = Modifier.testTag("reply_submit_${item.name.replace(" ", "_")}"),
-                                                colors = ButtonDefaults.buttonColors(containerColor = BrandGreenPrimary)
-                                            ) {
-                                                Icon(Icons.Default.Send, contentDescription = null, modifier = Modifier.size(14.dp))
-                                                Spacer(modifier = Modifier.width(4.dp))
-                                                Text("Submit Response", style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Bold))
-                                            }
+                                            Icon(Icons.Default.Send, contentDescription = null, modifier = Modifier.size(14.dp))
+                                            Spacer(modifier = Modifier.width(4.dp))
+                                            Text("Save Response", style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Bold))
                                         }
                                     }
                                 }
@@ -590,6 +705,13 @@ fun CustomerFeedbackScreen(
 @Composable
 fun HelpCenterScreen(viewModel: AppViewModel) {
     var activeHelpTab by remember { mutableStateOf("TOPICS") } // Default is Help Topics
+    androidx.activity.compose.BackHandler {
+        if (activeHelpTab == "CHAT") {
+            activeHelpTab = "TOPICS"
+        } else {
+            viewModel.navigateTo(AppScreen.MAIN)
+        }
+    }
     var searchQuery by remember { mutableStateOf("") }
     var expandedGuideTitles by remember { mutableStateOf(emptySet<String>()) }
     var textInput by remember { mutableStateOf("") }

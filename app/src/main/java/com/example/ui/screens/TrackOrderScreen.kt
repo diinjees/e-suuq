@@ -165,6 +165,10 @@ import com.example.ui.utils.*
 @Composable
 fun TrackOrderScreen(viewModel: AppViewModel) {
     val order by viewModel.trackingOrder.collectAsStateWithLifecycle()
+    androidx.activity.compose.BackHandler {
+        viewModel.selectOrderDetail(order)
+        viewModel.navigateTo(AppScreen.MAIN)
+    }
     val scope = rememberCoroutineScope()
 
     Scaffold(

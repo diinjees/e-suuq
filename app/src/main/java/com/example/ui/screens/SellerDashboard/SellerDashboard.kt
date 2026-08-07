@@ -203,6 +203,7 @@ fun SellerDashboardScreen(viewModel: AppViewModel) {
     val sellerDailySalesList by viewModel.sellerDailySalesList.collectAsStateWithLifecycle()
     val sellerMonthlyStatsList by viewModel.sellerMonthlyStatsList.collectAsStateWithLifecycle()
     val isSellerDashboardLoading by viewModel.isSellerDashboardLoading.collectAsStateWithLifecycle()
+    val isOnline by viewModel.isOnline.collectAsStateWithLifecycle()
 
     val sellerProfileId = activeUser?.sellerProfileId ?: ""
     val products = sellerProducts
@@ -214,6 +215,7 @@ fun SellerDashboardScreen(viewModel: AppViewModel) {
     // ✅ Subscribe to real-time updates ONLY when inside SellerDashboard AND store status is online
     DisposableEffect(storeOpen, sellerId) {
         viewModel.repository.syncEngine.setSellerActive(true)
+        viewModel.loadSellerDashboardData(sellerId)
         
         if (storeOpen && sellerId.isNotBlank()) {
             viewModel.subscribeSellerRealtime(sellerId)
@@ -396,6 +398,9 @@ fun SellerDashboardScreen(viewModel: AppViewModel) {
         var cancelRefundReceiptState by remember { mutableStateOf<String?>(null) }
         var showCancelDialog by remember { mutableStateOf(false) }
 
+        var orderToConfirmPayment by remember { mutableStateOf<SellerOrderEntity?>(null) }
+        var showPaymentConfirmDialog by remember { mutableStateOf(false) }
+
         var orderToMarkReady by remember { mutableStateOf<SellerOrderEntity?>(null) }
         var showReadyConfirmDialog by remember { mutableStateOf(false) }
         var sellerSelectedOrderDetail by remember { mutableStateOf<SellerOrderEntity?>(null) }
@@ -480,6 +485,32 @@ fun SellerDashboardScreen(viewModel: AppViewModel) {
         @Composable
         fun HeaderBlock() {
             Column(modifier = Modifier.fillMaxWidth()) {
+                if (!isOnline) {
+                    Card(
+                        modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp),
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer),
+                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.error.copy(alpha = 0.5f))
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp).fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Warning,
+                                contentDescription = "Offline Mode",
+                                tint = MaterialTheme.colorScheme.onErrorContainer,
+                                modifier = Modifier.size(18.dp)
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                                text = "Offline Mode — Viewing saved Room DB data",
+                                style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold),
+                                color = MaterialTheme.colorScheme.onErrorContainer
+                            )
+                        }
+                    }
+                }
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
@@ -492,17 +523,6 @@ fun SellerDashboardScreen(viewModel: AppViewModel) {
                                 style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold),
                                 color = MaterialTheme.colorScheme.onSurface
                             )
-                            IconButton(
-                                onClick = { if (sellerId.isNotEmpty()) viewModel.loadSellerDashboardData(sellerId, forceRefresh = true) },
-                                modifier = Modifier.size(24.dp).testTag("seller_dashboard_refresh_btn")
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.Refresh,
-                                    contentDescription = "Refresh Dashboard",
-                                    tint = MaterialTheme.colorScheme.primary,
-                                    modifier = Modifier.size(18.dp)
-                                )
-                            }
                         }
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Icon(
@@ -705,7 +725,7 @@ fun SellerDashboardScreen(viewModel: AppViewModel) {
                                         text = "${products.size} Products",
                                         style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold)
                                     )
-                                    val hasLowStock = products.any { it.stock in 1..3 }
+                                    val hasLowStock = products.any { it.stock <= it.lowStock }
                                     if (hasLowStock) {
                                         Spacer(modifier = Modifier.width(4.dp))
                                         Icon(
@@ -969,6 +989,12 @@ fun SellerDashboardScreen(viewModel: AppViewModel) {
 
         @Composable
         fun SellerReviewsBlock() {
+            val avgRating = remember(reviewsListState) {
+                val parsed = reviewsListState.mapNotNull { it.rating.removePrefix("★").trim().toDoubleOrNull() }
+                if (parsed.isNotEmpty()) parsed.average() else 5.0
+            }
+            val formattedAvg = String.format(java.util.Locale.US, "%.1f", avgRating)
+
             Card(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -988,18 +1014,35 @@ fun SellerDashboardScreen(viewModel: AppViewModel) {
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Column {
+                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                Text(
+                                    text = "Recent Customer Feedback",
+                                    style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold)
+                                )
+                                Card(
+                                    colors = CardDefaults.cardColors(containerColor = BrandGoldSecondary.copy(alpha = 0.15f))
+                                ) {
+                                    Row(
+                                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(2.dp)
+                                    ) {
+                                        Icon(Icons.Default.Star, contentDescription = null, tint = BrandGoldSecondary, modifier = Modifier.size(12.dp))
+                                        Text(
+                                            text = formattedAvg,
+                                            style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold, color = BrandGoldSecondary)
+                                        )
+                                    }
+                                }
+                            }
                             Text(
-                                text = "Recent Customer Feedback",
-                                style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold)
-                            )
-                            Text(
-                                text = "Latest ratings and testimonials from buyers",
+                                text = "Based on ${reviewsListState.size} user reviews",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
                         Text(
-                            text = "Tap →",
+                            text = "View All (${reviewsListState.size}) →",
                             style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Bold, color = BrandGreenPrimary)
                         )
                     }
@@ -1011,7 +1054,12 @@ fun SellerDashboardScreen(viewModel: AppViewModel) {
                     ) {
                         items(reviewsListState) { item ->
                             Card(
-                                modifier = Modifier.width(220.dp),
+                                modifier = Modifier
+                                    .width(220.dp)
+                                    .clickable {
+                                        previousDashboardSubView = activeDashboardSubView
+                                        activeDashboardSubView = "CUSTOMER_FEEDBACK"
+                                    },
                                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.15f))
                             ) {
                                 Column(modifier = Modifier.padding(12.dp)) {
@@ -1019,16 +1067,30 @@ fun SellerDashboardScreen(viewModel: AppViewModel) {
                                         modifier = Modifier.fillMaxWidth(),
                                         horizontalArrangement = Arrangement.SpaceBetween
                                     ) {
-                                        Text(text = item.name, style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold))
+                                        Text(text = item.name, style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold), maxLines = 1)
                                         Text(text = item.rating, style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.SemiBold), color = BrandGoldSecondary)
                                     }
                                     Spacer(modifier = Modifier.height(6.dp))
                                     Text(
                                         text = item.comment,
                                         style = MaterialTheme.typography.bodySmall,
-                                        maxLines = 3,
+                                        maxLines = 2,
                                         overflow = TextOverflow.Ellipsis
                                     )
+                                    Spacer(modifier = Modifier.height(6.dp))
+                                    if (!item.replyText.isNullOrBlank()) {
+                                        Text(
+                                            text = "✓ Responded",
+                                            style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
+                                            color = BrandGreenPrimary
+                                        )
+                                    } else {
+                                        Text(
+                                            text = "+ Reply to buyer",
+                                            style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
+                                            color = MaterialTheme.colorScheme.primary
+                                        )
+                                    }
                                 }
                             }
                         }
@@ -1223,7 +1285,10 @@ fun SellerDashboardScreen(viewModel: AppViewModel) {
                             when (order.status) {
                                 "PENDING" -> {
                                     Button(
-                                        onClick = { viewModel.updateOrderStatus(order, "CONFIRMED") },
+                                        onClick = {
+                                            orderToConfirmPayment = order
+                                            showPaymentConfirmDialog = true
+                                        },
                                         modifier = Modifier.weight(1f).testTag("confirm_btn_${order.id}"),
                                         colors = ButtonDefaults.buttonColors(containerColor = BrandGreenPrimary)
                                     ) {
@@ -1464,7 +1529,7 @@ fun SellerDashboardScreen(viewModel: AppViewModel) {
 
                 // Low stock filter
                 if (filterOnlyLowStock) {
-                    result = result.filter { it.stock in 1..3 }
+                    result = result.filter { it.stock <= it.lowStock }
                 }
 
                 com.example.ui.utils.DebugLogManager.log("ProductsInventoryBlock", "📦 ProductsInventoryBlock showing ${result.size} of ${products.size} products (category: $activeCategory, search: '$searchQuery', lowStockOnly: $filterOnlyLowStock)")
@@ -1473,7 +1538,7 @@ fun SellerDashboardScreen(viewModel: AppViewModel) {
 
             // ✅ Fixed: Derived low stock count with remember key
             val lowStockCount = remember(products) {
-                products.count { it.stock in 1..3 }
+                products.count { it.stock <= it.lowStock }
             }
 
             LazyColumn(
@@ -5594,6 +5659,102 @@ fun SellerDashboardScreen(viewModel: AppViewModel) {
                                                 text = "Manage Order Actions:",
                                                 style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold)
                                             )
+
+                                            // Display Payment Receipt Image in Manage Order Actions
+                                            val rawReceipt = order.paymentReceipt
+                                            val receiptUrl = if (!rawReceipt.isNullOrBlank()) {
+                                                if (rawReceipt.startsWith("http")) rawReceipt else "https://metube.pockethost.io/api/files/orders/${order.id}/$rawReceipt"
+                                            } else null
+
+                                            if (!receiptUrl.isNullOrBlank()) {
+                                                var showFullReceipt by remember { mutableStateOf(false) }
+                                                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                                    Text(
+                                                        text = "Payment Receipt Image (Tap to expand):",
+                                                        style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
+                                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                                    )
+                                                    Card(
+                                                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                                                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+                                                        shape = RoundedCornerShape(10.dp),
+                                                        modifier = Modifier
+                                                            .fillMaxWidth()
+                                                            .height(200.dp)
+                                                            .clickable { showFullReceipt = true }
+                                                    ) {
+                                                        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                                                            AsyncImage(
+                                                                model = receiptUrl,
+                                                                contentDescription = "Payment Receipt Image",
+                                                                modifier = Modifier.fillMaxSize().padding(4.dp),
+                                                                contentScale = androidx.compose.ui.layout.ContentScale.Fit
+                                                            )
+                                                            Surface(
+                                                                color = Color.Black.copy(alpha = 0.6f),
+                                                                shape = RoundedCornerShape(12.dp),
+                                                                modifier = Modifier
+                                                                    .align(Alignment.BottomCenter)
+                                                                    .padding(8.dp)
+                                                            ) {
+                                                                Row(
+                                                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                                                                    verticalAlignment = Alignment.CenterVertically,
+                                                                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                                                ) {
+                                                                    Icon(
+                                                                        imageVector = Icons.Default.ZoomIn,
+                                                                        contentDescription = null,
+                                                                        tint = Color.White,
+                                                                        modifier = Modifier.size(14.dp)
+                                                                    )
+                                                                    Text(
+                                                                        text = "Tap to view full receipt",
+                                                                        color = Color.White,
+                                                                        style = MaterialTheme.typography.labelSmall
+                                                                    )
+                                                                }
+                                                            }
+                                                        }
+                                                    }
+                                                }
+
+                                                if (showFullReceipt) {
+                                                    androidx.compose.ui.window.Dialog(
+                                                        onDismissRequest = { showFullReceipt = false },
+                                                        properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false)
+                                                    ) {
+                                                        Box(
+                                                            modifier = Modifier
+                                                                .fillMaxSize()
+                                                                .background(Color.Black)
+                                                                .clickable { showFullReceipt = false }
+                                                        ) {
+                                                            AsyncImage(
+                                                                model = receiptUrl,
+                                                                contentDescription = "Full Payment Receipt",
+                                                                modifier = Modifier
+                                                                    .fillMaxSize()
+                                                                    .padding(16.dp),
+                                                                contentScale = androidx.compose.ui.layout.ContentScale.Fit
+                                                            )
+                                                            IconButton(
+                                                                onClick = { showFullReceipt = false },
+                                                                modifier = Modifier
+                                                                    .align(Alignment.TopEnd)
+                                                                    .padding(24.dp)
+                                                                    .background(Color.Black.copy(alpha = 0.5f), CircleShape)
+                                                            ) {
+                                                                Icon(
+                                                                    imageVector = Icons.Default.Close,
+                                                                    contentDescription = "Close",
+                                                                    tint = Color.White
+                                                                )
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            }
                                             Row(
                                                 modifier = Modifier.fillMaxWidth(),
                                                 horizontalArrangement = Arrangement.spacedBy(12.dp)
@@ -5601,7 +5762,10 @@ fun SellerDashboardScreen(viewModel: AppViewModel) {
                                                 when (order.status) {
                                                     "PENDING" -> {
                                                         Button(
-                                                            onClick = { viewModel.updateOrderStatus(order, "CONFIRMED") },
+                                                            onClick = {
+                                                                orderToConfirmPayment = order
+                                                                showPaymentConfirmDialog = true
+                                                            },
                                                             modifier = Modifier.weight(1f).testTag("page_confirm_btn_${order.id}"),
                                                             colors = ButtonDefaults.buttonColors(containerColor = BrandGreenPrimary)
                                                         ) {
@@ -6882,7 +7046,7 @@ fun SellerDashboardScreen(viewModel: AppViewModel) {
                                                                     putInt("age_active_limit", activeVal)
                                                                     putInt("age_normal_limit", normalVal)
                                                                     putInt("age_slow_limit", slowVal)
-                                                                    apply()
+                                                                    commit()
                                                                 }
                                                                 
                                                                 isEditingAging = false
@@ -7267,328 +7431,98 @@ fun SellerDashboardScreen(viewModel: AppViewModel) {
                 }
                 else -> {
                     // MAIN View (Clean dashboard with clickable stats)
-                    HeaderBlock()
-                    
-                    if (isWideScreen) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(16.dp)
-                        ) {
-                            Column(
-                                modifier = Modifier.weight(1f),
-                                verticalArrangement = Arrangement.spacedBy(16.dp)
+                    if (isSellerDashboardLoading) {
+                        FullSellerDashboardSkeleton()
+                    } else {
+                        HeaderBlock()
+                        
+                        if (isWideScreen) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(16.dp)
                             ) {
-                                StatsBlock()
-                                SellerReviewsBlock()
+                                Column(
+                                    modifier = Modifier.weight(1f),
+                                    verticalArrangement = Arrangement.spacedBy(16.dp)
+                                ) {
+                                    StatsBlock()
+                                    SellerReviewsBlock()
+                                }
+                                Column(
+                                    modifier = Modifier.weight(1f),
+                                    verticalArrangement = Arrangement.spacedBy(16.dp)
+                                ) {
+                                    OrdersBlock()
+                                }
                             }
-                            Column(
-                                modifier = Modifier.weight(1f),
-                                verticalArrangement = Arrangement.spacedBy(16.dp)
-                             ) {
-                                 OrdersBlock()
-                             }
-                         }
-                     } else {
-                         StatsBlock()
-                         OrdersBlock()
-                         SellerReviewsBlock()
-                     }
+                        } else {
+                            StatsBlock()
+                            OrdersBlock()
+                            SellerReviewsBlock()
+                        }
+                    }
                 }
             }
         }
 
+        // Payment Confirmation Dialog for Incoming Pending Orders
+        if (showPaymentConfirmDialog && orderToConfirmPayment != null) {
+            PaymentConfirmationDialog(
+                order = orderToConfirmPayment!!,
+                viewModel = viewModel,
+                activeUser = activeUser,
+                merchantStoreName = merchantStoreName,
+                onDismissRequest = {
+                    showPaymentConfirmDialog = false
+                    orderToConfirmPayment = null
+                }
+            )
+        }
+
         // Cancellation reason dialog
         if (showCancelDialog && selectedOrderToCancel != null) {
-            AlertDialog(
-                onDismissRequest = { showCancelDialog = false },
-                title = { Text("Cancel Order #${selectedOrderToCancel?.id}", style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold)) },
-                text = {
-                    Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
-                        Text("Cancellation of orders requires an official money-back refund receipt upload and a valid reason.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.outline)
-                        
-                        Text("1. Reason for Cancellation *", style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold))
-                        OutlinedTextField(
-                            value = cancelReasonInput,
-                            onValueChange = { cancelReasonInput = it },
-                            placeholder = { Text("e.g. Out of stock, price changes...") },
-                            modifier = Modifier.fillMaxWidth().testTag("cancel_reason_input"),
-                            singleLine = true
-                        )
-                        
-                        Text("2. Money-Back Receipt Upload *", style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold))
-                        
-                        if (cancelRefundReceiptState == null) {
-                            Card(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .border(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.8f), RoundedCornerShape(8.dp)),
-                                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                                shape = RoundedCornerShape(8.dp)
-                            ) {
-                                Column(
-                                    modifier = Modifier.padding(16.dp),
-                                    horizontalAlignment = Alignment.CenterHorizontally,
-                                    verticalArrangement = Arrangement.spacedBy(8.dp)
-                                ) {
-                                    Icon(
-                                        imageVector = Icons.Default.UploadFile,
-                                        contentDescription = null,
-                                        tint = MaterialTheme.colorScheme.outline,
-                                        modifier = Modifier.size(36.dp)
-                                    )
-                                    Text(
-                                        "No Refund Receipt Uploaded",
-                                        style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Bold),
-                                        color = MaterialTheme.colorScheme.outline
-                                    )
-                                    Text(
-                                        "Choose a simulated transfer confirmation below:",
-                                        style = MaterialTheme.typography.labelSmall,
-                                        color = MaterialTheme.colorScheme.outline,
-                                        textAlign = TextAlign.Center
-                                    )
-                                    
-                                    Row(
-                                        modifier = Modifier.fillMaxWidth(),
-                                        horizontalArrangement = Arrangement.spacedBy(6.dp)
-                                    ) {
-                                        listOf(
-                                            "Telebirr Txn" to "telebirr_refund_923.png",
-                                            "CBE Transfer" to "cbe_refund_812.png",
-                                            "Cash Return" to "cash_refund_slip.png"
-                                        ).forEach { (label, file) ->
-                                            Button(
-                                                onClick = { cancelRefundReceiptState = file },
-                                                colors = ButtonDefaults.buttonColors(
-                                                    containerColor = MaterialTheme.colorScheme.secondaryContainer,
-                                                    contentColor = MaterialTheme.colorScheme.onSecondaryContainer
-                                                ),
-                                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
-                                                modifier = Modifier.weight(1f).height(32.dp),
-                                                shape = RoundedCornerShape(4.dp)
-                                            ) {
-                                                Text(label, style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp))
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        } else {
-                            Card(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .border(1.dp, BrandGreenPrimary.copy(alpha = 0.5f), RoundedCornerShape(8.dp)),
-                                colors = CardDefaults.cardColors(containerColor = BrandGreenPrimary.copy(alpha = 0.05f)),
-                                shape = RoundedCornerShape(8.dp)
-                            ) {
-                                Row(
-                                    modifier = Modifier.padding(12.dp),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.SpaceBetween
-                                ) {
-                                    Row(verticalAlignment = Alignment.CenterVertically) {
-                                        Icon(
-                                            imageVector = Icons.Default.ReceiptLong,
-                                            contentDescription = null,
-                                            tint = BrandGreenPrimary,
-                                            modifier = Modifier.size(28.dp)
-                                        )
-                                        Spacer(modifier = Modifier.width(10.dp))
-                                        Column {
-                                            Text(
-                                                "Receipt Attached",
-                                                style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Bold),
-                                                color = BrandGreenPrimary
-                                            )
-                                            Text(
-                                                cancelRefundReceiptState ?: "",
-                                                style = MaterialTheme.typography.labelSmall,
-                                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                                            )
-                                        }
-                                    }
-                                    IconButton(
-                                        onClick = { cancelRefundReceiptState = null },
-                                        modifier = Modifier.size(24.dp)
-                                    ) {
-                                        Icon(
-                                            imageVector = Icons.Default.Close,
-                                            contentDescription = "Remove receipt",
-                                            tint = BrandRedTertiary,
-                                            modifier = Modifier.size(16.dp)
-                                        )
-                                    }
-                                }
-                            }
-                        }
-                    }
-                },
-                confirmButton = {
-                    val isFormValid = cancelReasonInput.isNotBlank() && cancelRefundReceiptState != null
-                    Button(
-                        onClick = {
-                            if (isFormValid) {
-                                viewModel.cancelOrderWithReason(selectedOrderToCancel!!, cancelReasonInput, cancelRefundReceiptState)
-                                showCancelDialog = false
-                                selectedOrderToCancel = null
-                            }
-                        },
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = if (isFormValid) BrandRedTertiary else MaterialTheme.colorScheme.outline.copy(alpha = 0.4f)
-                        ),
-                        enabled = isFormValid,
-                        modifier = Modifier.testTag("confirm_cancel_btn")
-                    ) {
-                        Text("Confirm Cancel", color = if (isFormValid) Color.White else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f))
-                    }
-                },
-                dismissButton = {
-                    TextButton(onClick = { showCancelDialog = false }) {
-                        Text("Keep Order")
-                    }
+            CancelOrderDialog(
+                order = selectedOrderToCancel!!,
+                viewModel = viewModel,
+                onDismissRequest = {
+                    showCancelDialog = false
+                    selectedOrderToCancel = null
                 }
             )
         }
 
         // Ready for Pickup confirmation dialog
         if (showReadyConfirmDialog && orderToMarkReady != null) {
-            AlertDialog(
-                onDismissRequest = { showReadyConfirmDialog = false },
-                title = { Text("Fulfillment Confirmation") },
-                text = { Text("Are you sure Order #${orderToMarkReady?.id} is ready for pickup?") },
-                confirmButton = {
-                    Button(
-                        onClick = {
-                            orderToMarkReady?.let { viewModel.updateOrderStatus(it, "READY_FOR_PICKUP") }
-                            showReadyConfirmDialog = false
-                            orderToMarkReady = null
-                        },
-                        modifier = Modifier.testTag("ready_confirm_yes")
-                    ) {
-                        Text("Yes")
-                    }
-                },
-                dismissButton = {
-                    TextButton(
-                        onClick = {
-                            showReadyConfirmDialog = false
-                            orderToMarkReady = null
-                        },
-                        modifier = Modifier.testTag("ready_confirm_no")
-                    ) {
-                        Text("No")
-                    }
+            ReadyConfirmDialog(
+                order = orderToMarkReady!!,
+                viewModel = viewModel,
+                onDismissRequest = {
+                    showReadyConfirmDialog = false
+                    orderToMarkReady = null
                 }
             )
         }
 
         // Courier verification dialog
         if (showCourierVerificationDialog && orderForCourierVerification != null) {
-            val expectedCode = orderForCourierVerification!!.deliveryVerifCode ?: ((orderForCourierVerification!!.id.hashCode() * 179) % 900000 + 100000).toString()
-            AlertDialog(
-                onDismissRequest = { showCourierVerificationDialog = false },
-                title = { Text("Verify Courier Identity") },
-                text = {
-                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Text(
-                            text = "Order #${orderForCourierVerification!!.id} is assigned to a delivery partner. Please enter the 6-digit verification code provided by the courier to verify they accepted this job.",
-                            style = MaterialTheme.typography.bodySmall
-                        )
-                        OutlinedTextField(
-                            value = courierVerificationCodeInput,
-                            onValueChange = { courierVerificationCodeInput = it.take(6) },
-                            label = { Text("6-Digit Courier Code") },
-                            placeholder = { Text("e.g. 548291") },
-                            singleLine = true,
-                            modifier = Modifier.fillMaxWidth().testTag("courier_verification_input"),
-                            keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
-                                keyboardType = androidx.compose.ui.text.input.KeyboardType.Number
-                            )
-                        )
-                    }
-                },
-                confirmButton = {
-                    Button(
-                        onClick = {
-                            viewModel.verifyDeliveryPickup(
-                                orderId = orderForCourierVerification!!.id,
-                                deliveryCode = courierVerificationCodeInput,
-                                onSuccess = {
-                                    showCourierVerificationDialog = false
-                                    orderForCourierVerification = null
-                                    android.widget.Toast.makeText(context, "Courier Identity Verified! Order handed over for delivery.", android.widget.Toast.LENGTH_LONG).show()
-                                },
-                                onError = { errorMsg ->
-                                    android.widget.Toast.makeText(context, "Verification Failed! $errorMsg", android.widget.Toast.LENGTH_LONG).show()
-                                }
-                            )
-                        },
-                        modifier = Modifier.testTag("courier_verify_btn")
-                    ) {
-                        Text("Verify & Handover")
-                    }
-                },
-                dismissButton = {
-                    TextButton(onClick = {
-                        showCourierVerificationDialog = false
-                        orderForCourierVerification = null
-                    }) {
-                        Text("Cancel")
-                    }
+            CourierVerificationDialog(
+                order = orderForCourierVerification!!,
+                viewModel = viewModel,
+                onDismissRequest = {
+                    showCourierVerificationDialog = false
+                    orderForCourierVerification = null
                 }
             )
         }
 
         // Buyer verification dialog for self-collect (buyer pickup)
         if (showBuyerVerificationDialog && orderForBuyerVerification != null) {
-            val expectedCode = orderForBuyerVerification!!.buyerVerifCode ?: ((orderForBuyerVerification!!.id.hashCode() * 179) % 900000 + 100000).toString()
-            AlertDialog(
-                onDismissRequest = { showBuyerVerificationDialog = false },
-                title = { Text("Verify Buyer Collection") },
-                text = {
-                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Text(
-                            text = "Order #${orderForBuyerVerification!!.id} is a Self-Collect (Buyer Pickup) order. Please ask the buyer for their 6-digit verification code to confirm handover.",
-                            style = MaterialTheme.typography.bodySmall
-                        )
-                        OutlinedTextField(
-                            value = buyerVerificationCodeInput,
-                            onValueChange = { buyerVerificationCodeInput = it.take(6) },
-                            label = { Text("6-Digit Buyer Code") },
-                            placeholder = { Text("e.g. 123456") },
-                            singleLine = true,
-                            modifier = Modifier.fillMaxWidth().testTag("buyer_verification_input"),
-                            keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
-                                keyboardType = androidx.compose.ui.text.input.KeyboardType.Number
-                            )
-                        )
-                    }
-                },
-                confirmButton = {
-                    Button(
-                        onClick = {
-                            if (buyerVerificationCodeInput == expectedCode) {
-                                // Transition status to "DELIVERED"
-                                viewModel.updateOrderStatus(orderForBuyerVerification!!, "DELIVERED")
-                                showBuyerVerificationDialog = false
-                                orderForBuyerVerification = null
-                                android.widget.Toast.makeText(context, "Buyer Code Verified! Order handed over successfully.", android.widget.Toast.LENGTH_LONG).show()
-                            } else {
-                                android.widget.Toast.makeText(context, "Verification Failed! Code is incorrect.", android.widget.Toast.LENGTH_LONG).show()
-                            }
-                        },
-                        modifier = Modifier.testTag("buyer_verify_btn")
-                    ) {
-                        Text("Verify & Handover")
-                    }
-                },
-                dismissButton = {
-                    TextButton(onClick = {
-                        showBuyerVerificationDialog = false
-                        orderForBuyerVerification = null
-                    }) {
-                        Text("Cancel")
-                    }
+            BuyerVerificationDialog(
+                order = orderForBuyerVerification!!,
+                viewModel = viewModel,
+                onDismissRequest = {
+                    showBuyerVerificationDialog = false
+                    orderForBuyerVerification = null
                 }
             )
         }
@@ -7652,7 +7586,8 @@ fun EditProductScreen(viewModel: AppViewModel) {
     var isFreeDelivery by remember { mutableStateOf(editingProduct?.isFreeDelivery ?: false) }
     var hasDiscount by remember { mutableStateOf((editingProduct?.discountPercent ?: 0) > 0) }
     var discountPercent by remember { mutableStateOf((editingProduct?.discountPercent ?: 0).toFloat()) }
-    var lowStockThreshold by remember { mutableStateOf("3") }
+    var lowStockThreshold by remember(editingProduct) { mutableStateOf(editingProduct?.lowStock?.toString() ?: "3") }
+    var lowStockError by remember { mutableStateOf<String?>(null) }
     var brand by remember { mutableStateOf(editingProduct?.brand ?: "") }
     var variants by remember { mutableStateOf(editingProduct?.variants ?: "") }
 
@@ -8304,8 +8239,25 @@ fun EditProductScreen(viewModel: AppViewModel) {
                         Column(modifier = Modifier.weight(0.8f)) {
                             OutlinedTextField(
                                 value = lowStockThreshold,
-                                onValueChange = { lowStockThreshold = it },
+                                onValueChange = { input ->
+                                    lowStockThreshold = input.filter { char -> char.isDigit() }
+                                    val limit = lowStockThreshold.toIntOrNull()
+                                    val availStock = stockStr.toIntOrNull() ?: 0
+                                    lowStockError = when {
+                                        limit == null || limit < 1 -> "Must be ≥ 1"
+                                        availStock > 1 && limit >= availStock -> "Must be < stock ($availStock)"
+                                        else -> null
+                                    }
+                                },
                                 label = { Text("Low Stock Limit *") },
+                                isError = lowStockError != null,
+                                supportingText = {
+                                    if (lowStockError != null) {
+                                        Text(lowStockError!!, color = BrandRedTertiary, style = MaterialTheme.typography.labelSmall)
+                                    } else {
+                                        Text("Alert limit (≥ 1 & < stock)", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.outline)
+                                    }
+                                },
                                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number, imeAction = androidx.compose.ui.text.input.ImeAction.Next),
                                 keyboardActions = androidx.compose.foundation.text.KeyboardActions(onNext = { focusManager.moveFocus(androidx.compose.ui.focus.FocusDirection.Down) }),
                                 modifier = Modifier.fillMaxWidth().testTag("product_low_stock_input"),
@@ -8919,6 +8871,7 @@ fun EditProductScreen(viewModel: AppViewModel) {
                     }
                     val finalStock = if (cleanedVariants.isNotEmpty()) cleanedVariants.sumOf { it.stock } else (stockStr.toIntOrNull() ?: 0)
                     val finalVariantsStr = if (cleanedVariants.isNotEmpty()) serializeStructuredVariants(cleanedVariants) else variants
+                    val finalLowStock = lowStockThreshold.toIntOrNull() ?: 3
 
                     val isNewProduct = (editingProduct == null)
                     if (name.isBlank()) {
@@ -8930,6 +8883,12 @@ fun EditProductScreen(viewModel: AppViewModel) {
                     } else if (finalStock < 0) {
                         stockError = "Must be 0 or more"
                         android.widget.Toast.makeText(context, "Please enter a valid stock count", android.widget.Toast.LENGTH_SHORT).show()
+                    } else if (finalLowStock < 1) {
+                        lowStockError = "Must be ≥ 1"
+                        android.widget.Toast.makeText(context, "Low stock limit must be at least 1.", android.widget.Toast.LENGTH_SHORT).show()
+                    } else if (finalStock > 1 && finalLowStock >= finalStock) {
+                        lowStockError = "Must be < stock ($finalStock)"
+                        android.widget.Toast.makeText(context, "Low stock limit ($finalLowStock) must be less than available stock ($finalStock).", android.widget.Toast.LENGTH_SHORT).show()
                     } else if (isNewProduct && (category.isBlank() || category == "None" || subcategory.isBlank() || subcategory == "None" || brand.isBlank() || brand == "None")) {
                         android.widget.Toast.makeText(context, "Please complete all fields (Category, Subcategory, Brand) in the Product Information Card.", android.widget.Toast.LENGTH_LONG).show()
                     } else {
@@ -8956,9 +8915,11 @@ fun EditProductScreen(viewModel: AppViewModel) {
                             brand = brand,
                             variants = finalVariantsStr,
                             subcategory = subcategory,
+                            lowStock = finalLowStock,
                             onResult = { success ->
                                 isSaving = false
                                 if (success) {
+                                    viewModel.fetchSellerProducts()
                                     android.widget.Toast.makeText(context, "Product saved successfully!", android.widget.Toast.LENGTH_SHORT).show()
                                     viewModel.navigateTo(AppScreen.MAIN)
                                 } else {
@@ -9345,6 +9306,557 @@ fun EditProductScreen(viewModel: AppViewModel) {
             shape = RoundedCornerShape(20.dp)
         )
     }
+}
+
+@Composable
+fun PaymentConfirmationDialog(
+    order: SellerOrderEntity,
+    viewModel: AppViewModel,
+    activeUser: com.example.data.UserEntity?,
+    merchantStoreName: String,
+    onDismissRequest: () -> Unit
+) {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    var paymentReferenceInput by remember { mutableStateOf(order.paymentReference ?: "") }
+
+    val refCode = if (order.paymentMethod.equals("Telebirr", ignoreCase = true)) {
+        "MP-8290${order.id}"
+    } else {
+        "TXN-4920${order.id}"
+    }
+
+    val currentBizName = activeUser?.businessName?.takeIf { it.isNotBlank() }
+        ?: merchantStoreName.takeIf { it.isNotBlank() }
+        ?: order.sellerName.ifBlank { "Bole Traditional Boutique" }
+
+    val userStoreLoc = activeUser?.storeLocation?.takeIf { it.lat != 0.0 || it.lon != 0.0 }
+    val orderStoreLoc = order.storeLocation.takeIf { it.lat != 0.0 || it.lon != 0.0 }
+    val currentStoreLoc: com.example.data.StoreLocation = userStoreLoc
+        ?: orderStoreLoc
+        ?: com.example.data.StoreLocation(lat = 8.9806, lon = 38.7578)
+
+    AlertDialog(
+        onDismissRequest = onDismissRequest,
+        title = {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(36.dp)
+                        .background(BrandGreenPrimary.copy(alpha = 0.12f), CircleShape),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Payments,
+                        contentDescription = null,
+                        tint = BrandGreenPrimary,
+                        modifier = Modifier.size(20.dp)
+                    )
+                }
+                Text(
+                    text = "Confirm Payment",
+                    style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold)
+                )
+            }
+        },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                // Info Banner
+                Surface(
+                    color = BrandGreenPrimary.copy(alpha = 0.08f),
+                    shape = RoundedCornerShape(12.dp),
+                    border = BorderStroke(1.dp, BrandGreenPrimary.copy(alpha = 0.2f))
+                ) {
+                    Row(
+                        modifier = Modifier.padding(12.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.CheckCircle,
+                            contentDescription = null,
+                            tint = BrandGreenPrimary,
+                            modifier = Modifier.size(20.dp)
+                        )
+                        Text(
+                            text = "Please verify that you have received payment in your account before confirming this order.",
+                            style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Medium),
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                    }
+                }
+
+                // Payment Details Card
+                Card(
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)
+                    ),
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+                    shape = RoundedCornerShape(14.dp),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(
+                        modifier = Modifier.padding(14.dp),
+                        verticalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        // Order ID Row
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = "Order ID",
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            Text(
+                                text = "#${order.id}",
+                                style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold)
+                            )
+                        }
+
+                        // Total Amount Row
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = "Total Amount",
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            Text(
+                                text = "${order.totalPrice} ETB",
+                                style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.ExtraBold),
+                                color = BrandGreenPrimary
+                            )
+                        }
+
+                        Spacer(modifier = Modifier.height(1.dp).fillMaxWidth().background(MaterialTheme.colorScheme.outlineVariant))
+
+                        // Expected Payment Ref Row
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = "Expected Payment Ref (${order.paymentMethod})",
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            Text(
+                                text = refCode,
+                                style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold),
+                                color = BrandGreenPrimary
+                            )
+                        }
+
+                        if (order.buyerName.isNotBlank()) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    text = "Customer",
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                                Text(
+                                    text = order.buyerName,
+                                    style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Medium)
+                                )
+                            }
+                        }
+                    }
+                }
+
+                // Required Payment Reference Input Field
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text(
+                        text = "Payment Reference / Txn ID *",
+                        style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold)
+                    )
+                    OutlinedTextField(
+                        value = paymentReferenceInput,
+                        onValueChange = { paymentReferenceInput = it },
+                        placeholder = { Text("e.g. TXN98234710 or MP203491") },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("payment_reference_input"),
+                        singleLine = true,
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = BrandGreenPrimary,
+                            unfocusedBorderColor = MaterialTheme.colorScheme.outline
+                        )
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.End,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Button(
+                    onClick = {
+                        val extraFields: Map<String, Any> = mapOf(
+                            "sellerName" to currentBizName,
+                            "seller_name" to currentBizName,
+                            "storeLocation" to currentStoreLoc,
+                            "paymentReference" to paymentReferenceInput.trim()
+                        )
+                        viewModel.updateOrderStatus(order, "CONFIRMED", extraFields)
+                        android.widget.Toast.makeText(
+                            context,
+                            "Payment confirmed! Order #${order.id} status updated to CONFIRMED.",
+                            android.widget.Toast.LENGTH_LONG
+                        ).show()
+                        onDismissRequest()
+                    },
+                    enabled = paymentReferenceInput.trim().equals(refCode, ignoreCase = true),
+                    colors = ButtonDefaults.buttonColors(containerColor = BrandGreenPrimary),
+                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier.testTag("confirm_payment_modal_btn")
+                ) {
+                    Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text("Confirm Payment")
+                }
+
+                Spacer(modifier = Modifier.width(8.dp))
+
+                OutlinedButton(
+                    onClick = onDismissRequest,
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    Text("Cancel")
+                }
+            }
+        },
+        dismissButton = null,
+        shape = RoundedCornerShape(20.dp)
+    )
+}
+
+@Composable
+fun CancelOrderDialog(
+    order: SellerOrderEntity,
+    viewModel: AppViewModel,
+    onDismissRequest: () -> Unit
+) {
+    var cancelReasonInput by remember { mutableStateOf("") }
+    var cancelRefundReceiptState by remember { mutableStateOf<String?>(null) }
+    var cancelRefundReferenceInput by remember { mutableStateOf(order.paymentBackReference ?: "") }
+
+    AlertDialog(
+        onDismissRequest = onDismissRequest,
+        title = { Text("Cancel Order #${order.id}", style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold)) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                Text("Cancellation of orders requires an official money-back refund receipt upload and a valid reason.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.outline)
+                
+                Text("1. Reason for Cancellation *", style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold))
+                OutlinedTextField(
+                    value = cancelReasonInput,
+                    onValueChange = { cancelReasonInput = it },
+                    placeholder = { Text("e.g. Out of stock, price changes...") },
+                    modifier = Modifier.fillMaxWidth().testTag("cancel_reason_input"),
+                    singleLine = true
+                )
+                
+                Text("2. Money-Back Receipt Upload *", style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold))
+                
+                if (cancelRefundReceiptState == null) {
+                    Card(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .border(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.8f), RoundedCornerShape(8.dp)),
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                        shape = RoundedCornerShape(8.dp)
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(16.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.UploadFile,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.outline,
+                                modifier = Modifier.size(36.dp)
+                            )
+                            Text(
+                                "No Refund Receipt Uploaded",
+                                style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Bold),
+                                color = MaterialTheme.colorScheme.outline
+                            )
+                            Text(
+                                "Choose a simulated transfer confirmation below:",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.outline,
+                                textAlign = TextAlign.Center
+                            )
+                            
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                listOf(
+                                    "Telebirr Txn" to "telebirr_refund_923.png",
+                                    "CBE Transfer" to "cbe_refund_812.png",
+                                    "Cash Return" to "cash_refund_slip.png"
+                                ).forEach { (label, file) ->
+                                    Button(
+                                        onClick = { cancelRefundReceiptState = file },
+                                        colors = ButtonDefaults.buttonColors(
+                                            containerColor = MaterialTheme.colorScheme.secondaryContainer,
+                                            contentColor = MaterialTheme.colorScheme.onSecondaryContainer
+                                        ),
+                                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
+                                        modifier = Modifier.weight(1f).height(32.dp),
+                                        shape = RoundedCornerShape(4.dp)
+                                    ) {
+                                        Text(label, style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp))
+                                    }
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    Card(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .border(1.dp, BrandGreenPrimary.copy(alpha = 0.5f), RoundedCornerShape(8.dp)),
+                        colors = CardDefaults.cardColors(containerColor = BrandGreenPrimary.copy(alpha = 0.05f)),
+                        shape = RoundedCornerShape(8.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(12.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(
+                                    imageVector = Icons.Default.ReceiptLong,
+                                    contentDescription = null,
+                                    tint = BrandGreenPrimary,
+                                    modifier = Modifier.size(28.dp)
+                                )
+                                Spacer(modifier = Modifier.width(10.dp))
+                                Column {
+                                    Text(
+                                        "Receipt Attached",
+                                        style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Bold),
+                                        color = BrandGreenPrimary
+                                    )
+                                    Text(
+                                        cancelRefundReceiptState ?: "",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                            }
+                            IconButton(
+                                onClick = { cancelRefundReceiptState = null },
+                                modifier = Modifier.size(24.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Close,
+                                    contentDescription = "Remove receipt",
+                                    tint = BrandRedTertiary,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                            }
+                        }
+                    }
+                }
+
+                Text("3. Money-Back Payment Reference", style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold))
+                OutlinedTextField(
+                    value = cancelRefundReferenceInput,
+                    onValueChange = { cancelRefundReferenceInput = it },
+                    placeholder = { Text("e.g. TXN9812408 or REF82910") },
+                    modifier = Modifier.fillMaxWidth().testTag("cancel_refund_ref_input"),
+                    singleLine = true
+                )
+            }
+        },
+        confirmButton = {
+            val isFormValid = cancelReasonInput.isNotBlank() && cancelRefundReceiptState != null
+            Button(
+                onClick = {
+                    if (isFormValid) {
+                        viewModel.cancelOrderWithReason(order, cancelReasonInput, cancelRefundReceiptState, cancelRefundReferenceInput.takeIf { it.isNotBlank() })
+                        onDismissRequest()
+                    }
+                },
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = if (isFormValid) BrandRedTertiary else MaterialTheme.colorScheme.outline.copy(alpha = 0.4f)
+                ),
+                enabled = isFormValid,
+                modifier = Modifier.testTag("confirm_cancel_btn")
+            ) {
+                Text("Confirm Cancel", color = if (isFormValid) Color.White else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f))
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismissRequest) {
+                Text("Keep Order")
+            }
+        }
+    )
+}
+
+@Composable
+fun ReadyConfirmDialog(
+    order: SellerOrderEntity,
+    viewModel: AppViewModel,
+    onDismissRequest: () -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onDismissRequest,
+        title = { Text("Fulfillment Confirmation") },
+        text = { Text("Are you sure Order #${order.id} is ready for pickup?") },
+        confirmButton = {
+            Button(
+                onClick = {
+                    viewModel.updateOrderStatus(order, "READY_FOR_PICKUP")
+                    onDismissRequest()
+                },
+                modifier = Modifier.testTag("ready_confirm_yes")
+            ) {
+                Text("Yes")
+            }
+        },
+        dismissButton = {
+            TextButton(
+                onClick = onDismissRequest,
+                modifier = Modifier.testTag("ready_confirm_no")
+            ) {
+                Text("No")
+            }
+        }
+    )
+}
+
+@Composable
+fun CourierVerificationDialog(
+    order: SellerOrderEntity,
+    viewModel: AppViewModel,
+    onDismissRequest: () -> Unit
+) {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    var courierVerificationCodeInput by remember { mutableStateOf("") }
+    AlertDialog(
+        onDismissRequest = onDismissRequest,
+        title = { Text("Verify Courier Identity") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(
+                    text = "Order #${order.id} is assigned to a delivery partner. Please enter the 6-digit verification code provided by the courier to verify they accepted this job.",
+                    style = MaterialTheme.typography.bodySmall
+                )
+                OutlinedTextField(
+                    value = courierVerificationCodeInput,
+                    onValueChange = { courierVerificationCodeInput = it.take(6) },
+                    label = { Text("6-Digit Courier Code") },
+                    placeholder = { Text("e.g. 548291") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth().testTag("courier_verification_input"),
+                    keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
+                        keyboardType = androidx.compose.ui.text.input.KeyboardType.Number
+                    )
+                )
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = {
+                    viewModel.verifyDeliveryPickup(
+                        orderId = order.id,
+                        deliveryCode = courierVerificationCodeInput,
+                        onSuccess = {
+                            onDismissRequest()
+                            android.widget.Toast.makeText(context, "Courier Identity Verified! Order handed over for delivery.", android.widget.Toast.LENGTH_LONG).show()
+                        },
+                        onError = { errorMsg ->
+                            android.widget.Toast.makeText(context, "Verification Failed! $errorMsg", android.widget.Toast.LENGTH_LONG).show()
+                        }
+                    )
+                },
+                modifier = Modifier.testTag("courier_verify_btn")
+            ) {
+                Text("Verify & Handover")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismissRequest) {
+                Text("Cancel")
+            }
+        }
+    )
+}
+
+@Composable
+fun BuyerVerificationDialog(
+    order: SellerOrderEntity,
+    viewModel: AppViewModel,
+    onDismissRequest: () -> Unit
+) {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    var buyerVerificationCodeInput by remember { mutableStateOf("") }
+    val expectedCode = order.buyerVerifCode ?: ((order.id.hashCode() * 179) % 900000 + 100000).toString()
+    AlertDialog(
+        onDismissRequest = onDismissRequest,
+        title = { Text("Verify Buyer Collection") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(
+                    text = "Order #${order.id} is a Self-Collect (Buyer Pickup) order. Please ask the buyer for their 6-digit verification code to confirm handover.",
+                    style = MaterialTheme.typography.bodySmall
+                )
+                OutlinedTextField(
+                    value = buyerVerificationCodeInput,
+                    onValueChange = { buyerVerificationCodeInput = it.take(6) },
+                    label = { Text("6-Digit Buyer Code") },
+                    placeholder = { Text("e.g. 123456") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth().testTag("buyer_verification_input"),
+                    keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
+                        keyboardType = androidx.compose.ui.text.input.KeyboardType.Number
+                    )
+                )
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = {
+                    if (buyerVerificationCodeInput == expectedCode) {
+                        viewModel.updateOrderStatus(order, "DELIVERED")
+                        onDismissRequest()
+                        android.widget.Toast.makeText(context, "Buyer Code Verified! Order handed over successfully.", android.widget.Toast.LENGTH_LONG).show()
+                    } else {
+                        android.widget.Toast.makeText(context, "Verification Failed! Code is incorrect.", android.widget.Toast.LENGTH_LONG).show()
+                    }
+                },
+                modifier = Modifier.testTag("buyer_verify_btn")
+            ) {
+                Text("Verify & Handover")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismissRequest) {
+                Text("Cancel")
+            }
+        }
+    )
 }
 
 

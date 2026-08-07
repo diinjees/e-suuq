@@ -146,7 +146,8 @@ class PocketBaseAuth(private val context: Context) {
         addressKebele: String? = null,
         birthDate: String? = null,
         idDocumentFront: File? = null,
-        idDocumentBack: File? = null
+        idDocumentBack: File? = null,
+        fromReferCode: String? = null
     ): AuthResult<PbUserRecord> = withContext(Dispatchers.IO) {
         try {
             val fields = mutableMapOf<String, RequestBody>()
@@ -167,6 +168,7 @@ class PocketBaseAuth(private val context: Context) {
             addressCity?.let { fields["addressCity"] = it.toRequestBody("text/plain".toMediaType()) }
             addressKebele?.let { fields["addressKebele"] = it.toRequestBody("text/plain".toMediaType()) }
             birthDate?.let { fields["birthDate"] = it.toRequestBody("text/plain".toMediaType()) }
+            fromReferCode?.takeIf { it.isNotBlank() }?.let { fields["fromReferCode"] = it.trim().toRequestBody("text/plain".toMediaType()) }
 
             val fileParts = mutableListOf<MultipartBody.Part>()
             
@@ -195,12 +197,20 @@ class PocketBaseAuth(private val context: Context) {
             }
 
             val response = client.getApi().registerWithFiles(fields, fileParts)
+
             AuthResult.Success(response)
             
         } catch (e: Exception) {
             Log.e(TAG, "Registration error", e)
             AuthResult.Error(e.message ?: "Unknown registration error")
         }
+    }
+
+    private fun generateUserReferCode(): String {
+        val randNumber = (10000..99999).random()
+        val randChar = ('A'..'Z').random()
+        val randEnd = (10..99).random()
+        return "kiosk-$randNumber$randChar$randEnd"
     }
 
     // ==========================================

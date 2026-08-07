@@ -73,11 +73,13 @@ data class UserEntity(
     val deliveryVerification: String? = null,  // "pending", "approved", "rejected"
     val deliveryProfileId: String? = null, // Reference to delivery_profiles.id
     
-    // ✅ Security fields
+    // ✅ Security & Referral fields
     val isAppLockEnabled: Boolean = false,
     val isBiometricEnabled: Boolean = false,
     val currentPinCode: String? = null,
-    val is2faCompleted: Boolean = true
+    val is2faCompleted: Boolean = true,
+    val referCode: String = "",
+    val fromReferCode: String = ""
 ) {
     // ✅ Helper to check if user is a seller with approved status
     fun isApprovedSeller(): Boolean {
@@ -133,6 +135,7 @@ data class SellerProductEntity(
     val rating: Double = 4.5,
     val cost: Double = 0.0,
     val sold: Int = 0,
+    val lowStock: Int = 3,
     val created: String? = null,
     val updated: String? = null
 )
@@ -231,6 +234,9 @@ data class OrderEntity(
     val deliveryPickup: Boolean = false,
     val isSelfPickup: Boolean = false,
     val paymentReceipt: String? = null,
+    val paymentReference: String? = null,
+    val paymentBackReceipt: String? = null,
+    val paymentBackReference: String? = null,
     val cancellationReason: String? = null,
     val timestamp: Long = System.currentTimeMillis(),
     val created: String? = null,
@@ -285,6 +291,9 @@ data class SellerOrderEntity(
     val deliveryPickup: Boolean = false,
     val isSelfPickup: Boolean = false,
     val paymentReceipt: String? = null,
+    val paymentReference: String? = null,
+    val paymentBackReceipt: String? = null,
+    val paymentBackReference: String? = null,
     val cancellationReason: String? = null,
     val timestamp: Long = System.currentTimeMillis(),
     val created: String? = null,
@@ -336,6 +345,9 @@ data class DeliveryOrderEntity(
     val deliveryPickup: Boolean = false,
     val isSelfPickup: Boolean = false,
     val paymentReceipt: String? = null,
+    val paymentReference: String? = null,
+    val paymentBackReceipt: String? = null,
+    val paymentBackReference: String? = null,
     val cancellationReason: String? = null,
     val timestamp: Long = System.currentTimeMillis(),
     val created: String? = null,
@@ -409,6 +421,7 @@ fun OrderEntity.toSellerOrder(): SellerOrderEntity = SellerOrderEntity(
     buyerVerifCode = buyerVerifCode, deliveryVerifCode = deliveryVerifCode,
     courierName = courierName, courierPlate = courierPlate, driverLocation = driverLocation,
     deliveryPickup = deliveryPickup, isSelfPickup = isSelfPickup, paymentReceipt = paymentReceipt,
+    paymentReference = paymentReference, paymentBackReceipt = paymentBackReceipt, paymentBackReference = paymentBackReference,
     cancellationReason = cancellationReason, timestamp = timestamp, created = created, updated = updated,
     items = items.map { it.toSellerItem() }
 )

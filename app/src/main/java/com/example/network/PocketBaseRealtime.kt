@@ -172,12 +172,30 @@ class PocketBaseRealtime(
                     attemptReconnect()
                 }
             } catch (e: Exception) {
-                if (e !is CancellationException) {
-                    log("SSE Exception: ${e.message}", isError = true)
-                    _connectionState.value = "ERROR"
-                    attemptReconnect()
-                } else {
+                val msg = e.message ?: e.javaClass.simpleName
+                val isExpectedDisconnect = isExplicitlyDisconnected || 
+                    e is CancellationException || 
+                    (e is IOException && (
+                        msg.contains("stream was reset", ignoreCase = true) ||
+                        msg.contains("stream reset", ignoreCase = true) ||
+                        msg.contains("canceled", ignoreCase = true) ||
+                        msg.contains("cancelled", ignoreCase = true) ||
+                        msg.contains("socket closed", ignoreCase = true) ||
+                        msg.contains("connection reset", ignoreCase = true) ||
+                        msg.contains("unexpected end of stream", ignoreCase = true) ||
+                        msg.contains("software caused connection abort", ignoreCase = true)
+                    ))
+
+                if (isExpectedDisconnect) {
+                    log("SSE stream closed or reset: $msg", isError = false)
                     _connectionState.value = "DISCONNECTED"
+                    if (!isExplicitlyDisconnected) {
+                        attemptReconnect()
+                    }
+                } else {
+                    log("SSE stream interrupted ($msg), reconnecting...", isError = false)
+                    _connectionState.value = "DISCONNECTED"
+                    attemptReconnect()
                 }
             }
         }
@@ -242,6 +260,11 @@ class PocketBaseRealtime(
 
         scope.launch {
             try {
+                if (clientId == null || clientId != cId || isExplicitlyDisconnected || _connectionState.value == "DISCONNECTED" || _activeTopics.value.isEmpty()) {
+                    log("Aborting syncSubscriptions: stream is disconnected or topics empty")
+                    return@launch
+                }
+
                 val jsonPayload = JSONObject().apply {
                     put("clientId", cId)
                     put("subscriptions", JSONArray(topics))
@@ -272,11 +295,23 @@ class PocketBaseRealtime(
 
                     override fun onResponse(call: Call, response: Response) {
                         response.use {
+                            val respBody = try { response.body?.string() ?: "" } catch (e: Exception) { "" }
                             if (response.isSuccessful) {
                                 log("Successfully synced ${topics.size} subscriptions: $topics")
                             } else {
-                                if (isExplicitlyDisconnected || clientId != cId || _connectionState.value == "DISCONNECTED" || _activeTopics.value.isEmpty()) {
-                                    log("Subscription POST returned ${response.code} (client disconnected or resetting)")
+                                val isInvalidClientId = respBody.contains("Missing or invalid client id", ignoreCase = true) || 
+                                                        respBody.contains("no client associated", ignoreCase = true) ||
+                                                        response.code == 400 || response.code == 404
+
+                                if (isInvalidClientId) {
+                                    if (!isExplicitlyDisconnected && _activeTopics.value.isNotEmpty() && clientId == cId) {
+                                        log("PocketBase clientId expired on server. Re-establishing SSE stream...", isError = false)
+                                        clientId = null
+                                        _connectionState.value = "DISCONNECTED"
+                                        attemptReconnect()
+                                    } else {
+                                        log("Subscription POST returned ${response.code} (client disconnected or resetting)")
+                                    }
                                 } else {
                                     log("Subscription POST status ${response.code}")
                                 }
@@ -297,6 +332,9 @@ class PocketBaseRealtime(
         reconnectJob?.cancel()
         sseJob?.cancel()
         activeCall?.cancel()
+        try {
+            postClient.dispatcher.cancelAll()
+        } catch (e: Exception) {}
         clientId = null
         _connectionState.value = "DISCONNECTED"
         log("Explicitly disconnected PocketBase realtime SSE stream")
@@ -433,6 +471,9 @@ class PocketBaseRealtime(
         reconnectJob?.cancel()
         sseJob?.cancel()
         activeCall?.cancel()
+        try {
+            postClient.dispatcher.cancelAll()
+        } catch (e: Exception) {}
         clientId = null
         _connectionState.value = "DISCONNECTED"
         log("Cleaned up PocketBase realtime connection")

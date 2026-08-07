@@ -1223,6 +1223,7 @@ fun CartScreen(viewModel: AppViewModel) {
                         val isUploaderRequired = paymentMethod == "Telebirr" || paymentMethod == "CBE"
                         val canPlaceOrder = selectedCartItems.isNotEmpty() && paymentMethod.isNotEmpty() && (if (isUploaderRequired) selectedReceiptIndex != null else true)
                         
+                        val selectedReceipt = if (selectedReceiptIndex != null) mockReceipts[selectedReceiptIndex!!] else null
                         Button(
                             onClick = {
                                 viewModel.checkoutSelected(
@@ -1230,7 +1231,9 @@ fun CartScreen(viewModel: AppViewModel) {
                                     address = com.example.data.ShippingAddress(lat = 9.02, lon = 38.75),
                                     paymentMethod = paymentMethod,
                                     customTotal = total,
-                                    isSelfPickup = isSelfPickup
+                                    isSelfPickup = isSelfPickup,
+                                    receiptTitle = selectedReceipt?.first,
+                                    receiptDetails = selectedReceipt?.second
                                 ) { latestOrder ->
                                     viewModel.setActiveOrderSuccess(latestOrder)
                                 }

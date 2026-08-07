@@ -33,6 +33,9 @@ class AppViewModel : ViewModel() {
     // REAL-TIME ORDER SUBSCRIPTIONS
     // ==========================================
 
+    private val networkMonitor = NetworkMonitor(context)
+    val isOnline: StateFlow<Boolean> = networkMonitor.isOnline
+
     private val realtime = PocketBaseRealtime(
         baseUrl = "https://metube.pockethost.io",
         authToken = auth.getToken()
@@ -99,6 +102,9 @@ class AppViewModel : ViewModel() {
     private val _activeUser = MutableStateFlow<UserEntity?>(null)
     val activeUser: StateFlow<UserEntity?> = _activeUser.asStateFlow()
 
+    private val _referEarnUser = MutableStateFlow<com.example.network.ReferEarnUser?>(null)
+    val referEarnUser: StateFlow<com.example.network.ReferEarnUser?> = _referEarnUser.asStateFlow()
+
     private val _sellerProfile = MutableStateFlow<SellerProfile?>(null)
     val sellerProfile: StateFlow<SellerProfile?> = _sellerProfile.asStateFlow()
 
@@ -146,6 +152,8 @@ class AppViewModel : ViewModel() {
             idDocumentBackfront = record.idDocumentBackfront,
             isTwoFactorEnabled = record.isTwoFactorEnabled ?: false,
             status = if (record.role == "SELLER" && sp != null) (sp.status ?: false) else (record.status ?: false),
+            referCode = record.referCode ?: "",
+            fromReferCode = record.fromReferCode ?: "",
             created = record.created,
             updated = record.updated,
             // ✅ Seller fields from expanded profile
@@ -399,6 +407,82 @@ class AppViewModel : ViewModel() {
         }
     }
 
+    fun loadReferEarnInfo() {
+        val user = activeUser.value
+        val userId = user?.id ?: ""
+        val userReferCode = user?.referCode ?: ""
+        viewModelScope.launch {
+            val result = repository.getReferEarnUser(userId, userReferCode)
+            val finalCode = if (result.referCode.isBlank()) userReferCode else result.referCode
+            _referEarnUser.value = result.copy(referCode = finalCode)
+        }
+    }
+
+    fun withdrawEarnedMoney(
+        amount: Double,
+        method: String,
+        accountNumber: String,
+        onSuccess: () -> Unit,
+        onError: (String) -> Unit
+    ) {
+        val currentInfo = _referEarnUser.value
+        val rawPending = if ((currentInfo?.pendingMoney ?: 0.0) > 0.0) {
+            currentInfo?.pendingMoney ?: 0.0
+        } else {
+            currentInfo?.totalMoney ?: 0.0
+        }
+
+        // Subtract existing pending requests awaiting approval
+        val pendingRequestsSum = currentInfo?.withdrawalHistory
+            ?.filter { it.status.equals("pending", ignoreCase = true) }
+            ?.sumOf { it.amount } ?: 0.0
+
+        val availablePending = (rawPending - pendingRequestsSum).coerceAtLeast(0.0)
+
+        if (amount <= 0) {
+            onError("Please enter a valid amount greater than ETB 0")
+            return
+        }
+        val intAmount = amount.toInt()
+        if (amount != intAmount.toDouble() || intAmount % 10 != 0) {
+            onError("Withdrawal amount must be in multiples of ETB 10 (e.g., 10, 20, 30, 50, 100).")
+            return
+        }
+        if (amount > availablePending) {
+            if (pendingRequestsSum > 0) {
+                onError("Insufficient withdrawable balance. You have ETB ${String.format("%.2f", rawPending)} balance, but ETB ${String.format("%.2f", pendingRequestsSum)} is currently pending approval.")
+            } else {
+                onError("Insufficient earned balance. Your current available balance is ETB ${String.format("%.2f", availablePending)}")
+            }
+            return
+        }
+        if (accountNumber.isBlank()) {
+            onError("Please enter your $method account / phone number")
+            return
+        }
+
+        val userId = activeUser.value?.id ?: currentInfo?.user ?: ""
+
+        viewModelScope.launch {
+            try {
+                repository.createWithdrawalRequest(
+                    userId = userId,
+                    amount = amount,
+                    method = method,
+                    accountNumber = accountNumber,
+                    pendingUserIds = currentInfo?.pendingUserIds ?: emptyList()
+                )
+
+                loadReferEarnInfo()
+
+                DebugLogManager.log("AppViewModel", "Withdrawal request of ETB $amount via $method ($accountNumber) submitted successfully.")
+                onSuccess()
+            } catch (e: Exception) {
+                onError("Failed to submit withdrawal request: ${e.message}")
+            }
+        }
+    }
+
     // ==========================================
     // REGISTER AS BUYER
     // ==========================================
@@ -415,6 +499,7 @@ class AppViewModel : ViewModel() {
         birthDate: String,
         idDocumentFront: File? = null,
         idDocumentBack: File? = null,
+        fromReferCode: String? = null,
         onSuccess: () -> Unit,
         onError: (String) -> Unit
     ) {
@@ -433,7 +518,8 @@ class AppViewModel : ViewModel() {
                     addressKebele = kebele,
                     birthDate = birthDate,
                     idDocumentFront = idDocumentFront,
-                    idDocumentBack = idDocumentBack
+                    idDocumentBack = idDocumentBack,
+                    fromReferCode = fromReferCode
                 )
 
                 when (result) {
@@ -1245,85 +1331,52 @@ class AppViewModel : ViewModel() {
         }
     }
 
-    fun loadSellerDashboardData(sellerId: String, forceRefresh: Boolean = false) {
+    fun loadSellerDashboardData(sellerId: String) {
+        if (sellerId.isBlank()) return
         viewModelScope.launch {
-            // Fetch seller analytics views from PocketBase
+            // 1. Instant Room DB load
+            val dbProducts = repository.getCachedSellerProducts(sellerId)
+            val dbOrders = repository.getCachedSellerOrders(sellerId)
+            val dbAnalytics = repository.getCachedSellerAnalytics(sellerId)
+
+            _sellerProducts.value = dbProducts
+            _sellerOrders.value = dbOrders
+            _sellerAnalytics.value = dbAnalytics
+
+            if (dbProducts.isNotEmpty() || dbOrders.isNotEmpty()) {
+                _isSellerDashboardLoading.value = false
+            } else {
+                _isSellerDashboardLoading.value = true
+            }
+
+            // 2. Fetch financial views & background sync from PocketBase
             viewModelScope.launch(Dispatchers.IO) {
                 try {
-                    val currentDate = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.US).format(java.util.Date())
-
-                    repository.getSellerDailySales(sellerId) // Fetch all for seller 
+                    repository.getSellerDailySales(sellerId)
                     repository.getSellerRevenue(sellerId)
                     repository.getSellerMonthlyStats(sellerId)
                     repository.getSellerProductInventory(sellerId)
-                    
-                } catch (e: Exception) {
-                    Log.e(TAG, "Error fetching seller financial/views data: ${e.message}")
-                }
-            }
 
-            if (forceRefresh) {
-                _isSellerDashboardLoading.value = true
-                repository.invalidateSellerCache(sellerId)
-                try {
-                    repository.syncEngine.backgroundSync()
-                } catch (e: Exception) {
-                    Log.e(TAG, "Force refresh dashboard sync error: ${e.message}")
-                }
-                val products = repository.getCachedSellerProducts(sellerId)
-                val orders = repository.getCachedSellerOrders(sellerId)
-                val analytics = repository.getCachedSellerAnalytics(sellerId)
-                
-                _sellerProducts.value = products
-                _sellerOrders.value = orders
-                _sellerAnalytics.value = analytics
-                _isSellerDashboardLoading.value = false
-            } else {
-                // 1. Check if cached in memory first for instant display
-                val cachedProducts = com.example.data.CacheManager.getInstance().get<List<SellerProductEntity>>("seller_products_$sellerId")
-                val cachedOrders = com.example.data.CacheManager.getInstance().get<List<SellerOrderEntity>>("seller_orders_$sellerId")
-                val cachedAnalytics = com.example.data.CacheManager.getInstance().get<SellerAnalytics>("seller_analytics_$sellerId")
-                
-                if (cachedProducts != null && cachedOrders != null && cachedAnalytics != null && cachedProducts.isNotEmpty()) {
-                    // Cache Hit - Instant Display
-                    _sellerProducts.value = cachedProducts
-                    _sellerOrders.value = cachedOrders
-                    _sellerAnalytics.value = cachedAnalytics
-                    DebugLogManager.log(TAG, "📦 Instant cache hit: ${cachedProducts.size} seller products loaded")
-                } else {
-                    // Cache Miss/Stale - Load DB content instantly
-                    val products = repository.getCachedSellerProducts(sellerId)
-                    val orders = repository.getCachedSellerOrders(sellerId)
-                    val analytics = repository.getCachedSellerAnalytics(sellerId)
-                    
-                    _sellerProducts.value = products
-                    _sellerOrders.value = orders
-                    _sellerAnalytics.value = analytics
-                    if (products.isNotEmpty()) com.example.data.CacheManager.getInstance().put("seller_products_$sellerId", products, 15 * 60 * 1000L)
-                    if (orders.isNotEmpty()) com.example.data.CacheManager.getInstance().put("seller_orders_$sellerId", orders, 15 * 60 * 1000L)
-                    com.example.data.CacheManager.getInstance().put("seller_analytics_$sellerId", analytics, 15 * 60 * 1000L)
-                    DebugLogManager.log(TAG, "📦 DB load: ${products.size} seller products loaded for $sellerId")
-                    
-                    // Trigger refresh in background from server
-                    viewModelScope.launch(Dispatchers.IO) {
-                        try {
-                            DebugLogManager.log("VIEWMODEL", "Seller dashboard cache stale/miss: refreshing from network...")
-                            repository.syncEngine.backgroundSync()
-                            val updatedProducts = repository.getCachedSellerProducts(sellerId)
-                            val updatedOrders = repository.getCachedSellerOrders(sellerId)
-                            val updatedAnalytics = repository.getCachedSellerAnalytics(sellerId)
-                            withContext(Dispatchers.Main) {
-                                _sellerProducts.value = updatedProducts
-                                _sellerOrders.value = updatedOrders
-                                _sellerAnalytics.value = updatedAnalytics
-                                if (updatedProducts.isNotEmpty()) com.example.data.CacheManager.getInstance().put("seller_products_$sellerId", updatedProducts, 15 * 60 * 1000L)
-                                if (updatedOrders.isNotEmpty()) com.example.data.CacheManager.getInstance().put("seller_orders_$sellerId", updatedOrders, 15 * 60 * 1000L)
-                                com.example.data.CacheManager.getInstance().put("seller_analytics_$sellerId", updatedAnalytics, 15 * 60 * 1000L)
-                                DebugLogManager.log(TAG, "📦 Network refresh completed: ${updatedProducts.size} seller products")
-                            }
-                        } catch (e: Exception) {
-                            Log.e(TAG, "Background dashboard refresh failed: ${e.message}", e)
+                    if (isOnline.value) {
+                        repository.syncEngine.backgroundSync()
+                        val updatedProducts = repository.getCachedSellerProducts(sellerId)
+                        val updatedOrders = repository.getCachedSellerOrders(sellerId)
+                        val updatedAnalytics = repository.getCachedSellerAnalytics(sellerId)
+                        withContext(Dispatchers.Main) {
+                            _sellerProducts.value = updatedProducts
+                            _sellerOrders.value = updatedOrders
+                            _sellerAnalytics.value = updatedAnalytics
+                            _isSellerDashboardLoading.value = false
                         }
+                    } else {
+                        withContext(Dispatchers.Main) {
+                            _isSellerDashboardLoading.value = false
+                        }
+                    }
+                } catch (e: Exception) {
+                    Log.e(TAG, "Error refreshing seller dashboard data: ${e.message}")
+                    withContext(Dispatchers.Main) {
+                        _isSellerDashboardLoading.value = false
                     }
                 }
             }
@@ -1896,15 +1949,15 @@ class AppViewModel : ViewModel() {
     }
 
 
-    fun updateOrderStatus(orderId: String, status: String) {
+    fun updateOrderStatus(orderId: String, status: String, extraFields: Map<String, Any> = emptyMap()) {
         viewModelScope.launch {
-            repository.updateOrderStatus(orderId, status)
+            repository.updateOrderStatus(orderId, status, extraFields)
         }
     }
 
-    fun updateOrderStatus(order: OrderEntity, status: String) {
+    fun updateOrderStatus(order: OrderEntity, status: String, extraFields: Map<String, Any> = emptyMap()) {
         viewModelScope.launch {
-            repository.updateOrderStatus(order.id, status)
+            repository.updateOrderStatus(order.id, status, extraFields)
         }
     }
 
@@ -2134,9 +2187,18 @@ class AppViewModel : ViewModel() {
         }
     }
 
-    fun cancelOrderWithReason(order: OrderEntity, reason: String, imageUri: String?) {
+    fun cancelOrderWithReason(order: OrderEntity, reason: String, imageUri: String?, refundRef: String? = null) {
         viewModelScope.launch {
-            repository.cancelOrder(order.id, reason)
+            val extraFields = mutableMapOf<String, Any>(
+                "cancellation_reason" to reason
+            )
+            imageUri?.let {
+                extraFields["paymentBackReceipt"] = it
+            }
+            refundRef?.let {
+                extraFields["paymentBackReference"] = it
+            }
+            repository.updateOrderStatus(order.id, "CANCELLED", extraFields)
         }
     }
 
@@ -2156,6 +2218,7 @@ class AppViewModel : ViewModel() {
         brand: String,
         variants: String,
         subcategory: String,
+        lowStock: Int = 3,
         onResult: (Boolean) -> Unit = {}
     ) {
         viewModelScope.launch {
@@ -2183,7 +2246,8 @@ class AppViewModel : ViewModel() {
                     discountPercent = discountPercent,
                     brand = brand,
                     variants = variants,
-                    subcategory = subcategory
+                    subcategory = subcategory,
+                    lowStock = lowStock
                 )
             } else {
                 SellerProductEntity(
@@ -2203,7 +2267,8 @@ class AppViewModel : ViewModel() {
                     discountPercent = discountPercent,
                     brand = brand,
                     variants = variants,
-                    subcategory = subcategory
+                    subcategory = subcategory,
+                    lowStock = lowStock
                 )
             }
             val success = repository.saveSellerProduct(product)
@@ -2457,7 +2522,7 @@ class AppViewModel : ViewModel() {
                 if (currentUser?.role == "SELLER") {
                     val sellerId = currentUser.sellerProfileId
                     if (!sellerId.isNullOrBlank()) {
-                        loadSellerDashboardData(sellerId, forceRefresh = true)
+                        loadSellerDashboardData(sellerId)
                     }
                 }
             }
@@ -2514,7 +2579,10 @@ class AppViewModel : ViewModel() {
             courierPlate = json["courier_plate"]?.jsonPrimitive?.contentOrNull,
             deliveryPickup = json["delivery_pickup"]?.jsonPrimitive?.booleanOrNull ?: false,
             isSelfPickup = json["is_self_pickup"]?.jsonPrimitive?.booleanOrNull ?: false,
-            paymentReceipt = json["payment_receipt"]?.jsonPrimitive?.contentOrNull,
+            paymentReceipt = json["paymentReceipt"]?.jsonPrimitive?.contentOrNull,
+            paymentReference = json["paymentReference"]?.jsonPrimitive?.contentOrNull,
+            paymentBackReceipt = json["paymentBackReceipt"]?.jsonPrimitive?.contentOrNull,
+            paymentBackReference = json["paymentBackReference"]?.jsonPrimitive?.contentOrNull,
             cancellationReason = json["cancellation_reason"]?.jsonPrimitive?.contentOrNull,
             created = json["created"]?.jsonPrimitive?.contentOrNull,
             updated = json["updated"]?.jsonPrimitive?.contentOrNull
@@ -2601,6 +2669,8 @@ class AppViewModel : ViewModel() {
         sellerName: String = "",
         buyerName: String = "",
         buyerPhone: String = "",
+        receiptTitle: String? = null,
+        receiptDetails: String? = null,
         onSuccess: (OrderEntity) -> Unit,
         onError: (String) -> Unit
     ) {
@@ -2632,7 +2702,9 @@ class AppViewModel : ViewModel() {
                     shippingAddress = shippingAddress,
                     sellerName = finalSellerName,
                     buyerName = finalBuyerName,
-                    buyerPhone = finalBuyerPhone
+                    buyerPhone = finalBuyerPhone,
+                    receiptTitle = receiptTitle,
+                    receiptDetails = receiptDetails
                 )
                 
                 when (result) {
@@ -3055,6 +3127,8 @@ class AppViewModel : ViewModel() {
         paymentMethod: String,
         customTotal: Double,
         isSelfPickup: Boolean,
+        receiptTitle: String? = null,
+        receiptDetails: String? = null,
         onSuccess: (OrderEntity) -> Unit
     ) {
         val primaryProduct = selectedCartItems.keys.firstOrNull()
@@ -3085,6 +3159,8 @@ class AppViewModel : ViewModel() {
             sellerName = sellerName,
             buyerName = activeUser?.fullName.orEmpty(),
             buyerPhone = activeUser?.phone.orEmpty(),
+            receiptTitle = receiptTitle,
+            receiptDetails = receiptDetails,
             onSuccess = { createdOrder ->
                 removeProductsFromCart(selectedCartItems.keys)
                 onSuccess(createdOrder)
@@ -3184,6 +3260,16 @@ class AppViewModel : ViewModel() {
 
     fun updateSellerProduct(product: SellerProductEntity) {
         updateProduct(product)
+    }
+
+    fun fetchSellerProducts() {
+        viewModelScope.launch {
+            val activeUser = _activeUser.value
+            val sellerId = activeUser?.sellerProfileId ?: activeUser?.id ?: ""
+            if (sellerId.isNotEmpty()) {
+                _sellerProducts.value = repository.getCachedSellerProducts(sellerId)
+            }
+        }
     }
 
     fun incrementDeliveryProgress(order: OrderEntity) {
@@ -3322,20 +3408,20 @@ class AppViewModel : ViewModel() {
         verifyAndCompleteDelivery(order.toBuyerOrder(), enteredCode, onSuccess, onError)
     }
 
-    fun updateOrderStatus(order: SellerOrderEntity, status: String) {
-        updateOrderStatus(order.toBuyerOrder(), status)
+    fun updateOrderStatus(order: SellerOrderEntity, status: String, extraFields: Map<String, Any> = emptyMap()) {
+        updateOrderStatus(order.toBuyerOrder(), status, extraFields)
     }
 
-    fun updateOrderStatus(order: DeliveryOrderEntity, status: String) {
-        updateOrderStatus(order.toBuyerOrder(), status)
+    fun updateOrderStatus(order: DeliveryOrderEntity, status: String, extraFields: Map<String, Any> = emptyMap()) {
+        updateOrderStatus(order.toBuyerOrder(), status, extraFields)
     }
 
-    fun cancelOrderWithReason(order: SellerOrderEntity, reason: String, imageUri: String?) {
-        cancelOrderWithReason(order.toBuyerOrder(), reason, imageUri)
+    fun cancelOrderWithReason(order: SellerOrderEntity, reason: String, imageUri: String?, refundRef: String? = null) {
+        cancelOrderWithReason(order.toBuyerOrder(), reason, imageUri, refundRef)
     }
 
-    fun cancelOrderWithReason(order: DeliveryOrderEntity, reason: String, imageUri: String?) {
-        cancelOrderWithReason(order.toBuyerOrder(), reason, imageUri)
+    fun cancelOrderWithReason(order: DeliveryOrderEntity, reason: String, imageUri: String?, refundRef: String? = null) {
+        cancelOrderWithReason(order.toBuyerOrder(), reason, imageUri, refundRef)
     }
 
     fun updateProfileImage(uriString: String) {
